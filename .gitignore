@@ -1,1 +1,6 @@
 /.vscode
+data/textures/f_01_alb.002_1k.png
+data/smpl_uv.obj
+data/smpl/SMPL_NEUTRAL.pkl
+/__pycache__
+data/test_camerahmr_message.txt

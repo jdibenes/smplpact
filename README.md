@@ -1,6 +1,6 @@
 # SMPL Painting and Charting Tools
 
-Python library for SMPL Model Painting.
+Python library for SMPL Model Texture Painting.
 
 ## Directory Overview
 
@@ -10,14 +10,13 @@ Python library for SMPL Model Painting.
 ## Running the demo
 
 1. Install dependencies:
-  - numpy
-  - opencv-python
-  - torch
-  - pyrender
-  - trimesh
-  - rtree
-  - smplx
-  - pillow
+    - opencv-python
+    - torch
+    - trimesh
+    - pyrender
+    - smplx
+    - chumpy
+    - rtree
 
 2. Download demo data from [[here]](https://stevens0-my.sharepoint.com/:u:/g/personal/jdibenes_stevens_edu/EVadG40Vl55LrrBOOEgR3QwBMa2V1Yj8xon_6uCwUPVs2Q?e=dwn0fd) (~1.51 MB).
 
