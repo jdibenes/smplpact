@@ -23,7 +23,7 @@ Python library for SMPL Model Painting.
 
 3. Extract the `smpl_paint_demo` folder from the demo data zip file.
 
-4. Copy the SMPL model files (`SMPL_NEUTRAL.pkl`, etc.) into `smpl_paint_demo/data/smpl`. Alternatively, you can edit the paths in the `smpl_paint_demo.py` script.
+4. Copy the SMPL model files (`SMPL_NEUTRAL.pkl`, etc.) into `smpl_paint_demo/data/smpl`. Alternatively, you can edit the paths in the `smpl_paint_demo.py` script. You can download the SMPL models from the [CameraHMR website](https://camerahmr.is.tue.mpg.de/index.html).
 
 5. Run the `smpl_paint_demo.py` script.
 
