@@ -22,8 +22,13 @@ Python library for SMPL Model Texture Painting.
 
 3. Extract the `smpl_paint_demo` folder from the demo data zip file.
 
-4. Copy the SMPL model files (`SMPL_NEUTRAL.pkl`, etc.) into `smpl_paint_demo/data/smpl`. Alternatively, you can edit the paths in the `smpl_paint_demo.py` script. You can download the SMPL models from the [CameraHMR website](https://camerahmr.is.tue.mpg.de/index.html).
+4. Copy the SMPL model files (`SMPL_NEUTRAL.pkl`, etc.) into `smpl_paint_demo/data/smpl`. Alternatively, you can edit the paths in the `smpl_paint_demo.py` script. You can download the SMPL models from [CameraHMR](https://camerahmr.is.tue.mpg.de/index.html).
 
 5. Run the `smpl_paint_demo.py` script.
 
 See `smpl_paint_demo.py` for keyboard controls and other details.
+
+## References
+
+- SMPL Models and UV Map: [SMPL](https://smpl.is.tue.mpg.de/) | [CameraHMR](https://camerahmr.is.tue.mpg.de/index.html)
+- Textures: [SMPL_texture_samples](https://github.com/Meshcapade/SMPL_texture_samples)
