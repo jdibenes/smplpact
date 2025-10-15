@@ -77,11 +77,11 @@ def geometry_distance_point_segment(line_start, line_end, point):
     line_direction, line_length = math_normalize(line_end - line_start)
     offset = point - line_start
     ny = offset @ line_direction.T
-    if (ny < 0):
+    if (ny <= 0):
         return np.linalg.norm(offset)
     offset = point - line_end
     ny = offset @ line_direction.T
-    if (ny > 0):
+    if (ny >= 0):
         return np.linalg.norm(offset)
     xz = offset - ny * line_direction
     return np.linalg.norm(xz)
