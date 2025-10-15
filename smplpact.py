@@ -291,7 +291,7 @@ def mesh_select_complete_faces(mesh, vertex_indices):
 
 # TODO: this is slow
 def mesh_to_renderer(mesh):
-    return pyrender.Mesh.from_trimesh(mesh, smooth=False)
+    return pyrender.Mesh.from_trimesh(mesh)
 
 
 class mesh_neighborhood_builder:
