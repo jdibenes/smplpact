@@ -230,6 +230,23 @@ def mesh_expand(mesh, uv_transform, faces_extended, visual=None):
     return mesh_create(mesh.vertices.view(np.ndarray)[uv_transform, :], faces_extended, visual)
 
 
+def mesh_faces_of_vertices(mesh, vertex_indices):
+    vertex_faces = mesh.vertex_faces
+    face_indices = set()
+    for vertex_index in vertex_indices:
+        face_indices.update(vertex_faces[vertex_index, :])
+    face_indices.discard(-1)
+    return face_indices
+
+
+def mesh_vertices_of_faces(mesh, face_indices):
+    faces = mesh.faces.view(np.ndarray)
+    vertex_indices = set()
+    for face_index in face_indices:
+        vertex_indices.update(faces[face_index])
+    return vertex_indices
+
+
 def mesh_raycast(mesh, origin, direction):
     point, rid, tid = mesh.ray.intersects_location(origin, direction, multiple_hits=False)
     return (point, tid[0]) if (len(rid) > 0) else (None, None) # tuple return
