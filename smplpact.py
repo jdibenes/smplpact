@@ -384,9 +384,58 @@ class mesh_neighborhood_processor:
         return self._done
 
 
+class mesh_neighborhood_processor_list:
+    def __init__(self, face_list, callback):
+        self._face_list = face_list
+        self._face_index = 0
+        self._face_count = len(face_list)
+        self._callback = callback        
+        self._done = False
+
+    def invoke(self, max_iterations):
+        for _ in range(0, max_iterations):
+            if (self._face_index >= self._face_count):
+                self._done = True
+                break
+            self._callback(self._face_list[self._face_index], -1)
+            self._face_index += 1
+        
+    def invoke_timeslice(self, timeout, steps=1):
+        start = time.perf_counter()
+        while (not self.done()):
+            self.invoke(steps)
+            if ((time.perf_counter() - start) >= timeout):
+                break
+
+    def status(self):
+        return (self._face_index, self._face_count) # tuple return
+
+    def done(self):
+        return self._done
+
+
 #------------------------------------------------------------------------------
 # Mesh Painting
 #------------------------------------------------------------------------------
+
+class mesh_neighborhood_operation_color:
+    def __init__(self, mesh_vertices, mesh_faces, mesh_uvx, target, tolerance=0):
+        self._mesh_vertices = mesh_vertices
+        self._mesh_faces = mesh_faces
+        self._mesh_uvx = mesh_uvx
+        self._target = target
+        self._tolerance = tolerance
+
+    def paint(self, face_index, level):
+        vertex_indices = self._mesh_faces[face_index]
+        self._level = level
+        self._pixels_painted = 0
+        texture_processor(self._mesh_uvx[vertex_indices, :], self._paint_uv, self._tolerance)
+        return mesh_neighborhood_processor_command.EXPAND if (self._pixels_painted > 0) else mesh_neighborhood_processor_command.IGNORE
+    
+    def _paint_uv(self, pixels, weights):
+        self._pixels_painted = self._target(pixels, self._level)
+
 
 # TODO: THIS DISTANCE IS NOT GEODESIC
 class mesh_neighborhood_operation_brush:
@@ -437,6 +486,20 @@ class mesh_neighborhood_operation_decal:
 
     def _paint_uv(self, pixels, weights):
         self._pixels_painted = self._target(self._mesh_vertices, self._face_normal, self._origin, self._vertex_indices_b, self._vertex_indices_a, pixels, weights, self._level)
+
+
+class paint_color_solid:
+    def __init__(self, color, stop_level, render_buffer):
+        self._color = color
+        self._stop_level = stop_level
+        self._render_buffer = render_buffer
+
+    def paint(self, pixels, level):
+        selection = pixels
+        pixels_painted = selection.shape[0]
+        if (pixels_painted > 0):
+            self._render_buffer[selection[:, 1], selection[:, 0], :] = self._color
+        return 1 if (level < self._stop_level) else 0
 
 
 class paint_brush_solid:
@@ -576,6 +639,12 @@ class paint_decal_solid:
     def paint(self, mesh_vertices, face_normal, origin, indices_vertices, indices_uvx, pixels_dst, weights_src, level):
         call = self._blit if ((pixels_dst is not None) and (weights_src is not None)) else self._unwrap if (level > 0) else self._bootstrap
         return call(mesh_vertices, face_normal, origin, indices_vertices, indices_uvx, pixels_dst, weights_src, level)
+
+
+def painter_create_color(mesh_a, mesh_b, mesh_uvx, uv_transform, face_index, origin, color, tolerance=0, fixed=False):
+    mno = mesh_neighborhood_operation_color(mesh_b.vertices.view(np.ndarray), mesh_b.faces.view(np.ndarray), mesh_uvx, color, tolerance)
+    mnp = mesh_neighborhood_processor(mesh_a, {face_index}, mno.paint) if (not fixed) else mesh_neighborhood_processor_list(face_index, mno.paint)
+    return mnp
 
 
 def painter_create_brush(mesh_a, mesh_b, mesh_uvx, uv_transform, face_index, origin, brush, tolerance=0):
@@ -1232,6 +1301,7 @@ class renderer_mesh_paint:
         self._background = background
         self._layers = dict()
         self._layer_enable = dict()
+        self._colors = dict()
         self._textures = dict()
         self._brushes = dict()
         self._decals = dict()
@@ -1258,6 +1328,12 @@ class renderer_mesh_paint:
     def texture_detach(self, texture_id):
         self._textures.pop(texture_id)
 
+    def color_create_solid(self, color_id, color, stop_level, layer_id):
+        self._colors[color_id] = paint_color_solid(color, stop_level, self._layers[layer_id])
+
+    def color_delete(self, color_id):
+        self._colors.pop(color_id)
+
     def brush_create_solid(self, brush_id, size, color, layer_id, fill_test=0.0):
         self._brushes[brush_id] = paint_brush_solid(size, color, self._layers[layer_id], fill_test)
 
@@ -1273,6 +1349,10 @@ class renderer_mesh_paint:
     def decal_delete(self, decal_id):
         self._decals.pop(decal_id)
 
+    def task_create_paint_color(self, task_id, mesh_a, mesh_b, face_index, origin, color_idx, tolerance=0, fixed=False):
+        o = self._colors[color_idx].paint
+        self._tasks[task_id] = painter_create_color(mesh_a, mesh_b, self._uvx, self._uv_transform, face_index, origin, o, tolerance, fixed)
+
     def task_create_paint_brush(self, task_id, mesh_a, mesh_b, face_index, origin, brush_ids, tolerance=0):
         o = [self._brushes[brush_id].paint for brush_id in brush_ids]
         self._tasks[task_id] = painter_create_brush(mesh_a, mesh_b, self._uvx, self._uv_transform, face_index, origin, o, tolerance)
@@ -1286,6 +1366,9 @@ class renderer_mesh_paint:
 
     def task_done(self, task_id):
         return self._tasks[task_id].done()
+    
+    def task_get(self, task_id):
+        return self._tasks[task_id]
     
     def task_delete(self, task_id):
         self._tasks.pop(task_id)
@@ -1459,6 +1542,17 @@ class renderer:
     def smpl_chart_to_pose(self, mesh_id, frame):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         return chart.to_pose(frame)
+    
+    def smpl_paint_color_solid(self, mesh_id, anchor, color, stop_level, timeout=0.05, steps=1, tolerance=0, fixed=False, manual=False, color_id=0, task_id=3):
+        mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
+        visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
+        face_index, point = (anchor.face_index, anchor.point) if (not fixed) else (anchor, None)
+        effect.color_create_solid(color_id, color, stop_level, 0)
+        effect.task_create_paint_color(task_id, mesh_a, mesh_b, face_index, point, color_id, tolerance, fixed)
+        if (manual):
+            return effect.task_get(task_id)
+        effect.task_execute(task_id, timeout, steps)
+        return effect.task_done(task_id)
 
     def smpl_paint_brush_solid(self, mesh_id, anchor, size, color, fill_test=0.0, timeout=0.05, steps=1, tolerance=0) -> bool:
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
