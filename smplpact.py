@@ -103,15 +103,17 @@ def texture_load_uv(filename_uv):
         obj_mesh_a = trimesh.exchange.obj.load_obj(file_obj=obj_file, maintain_order=True)
     with open(filename_uv, 'r') as obj_file:
         obj_mesh_b = trimesh.exchange.obj.load_obj(file_obj=obj_file)
+    mesh_vertices_a = obj_mesh_a['geometry'][filename_uv]['vertices']
     mesh_vertices_b = obj_mesh_b['geometry'][filename_uv]['vertices']
     mesh_faces_a = obj_mesh_a['geometry'][filename_uv]['faces']
     mesh_faces_b = obj_mesh_b['geometry'][filename_uv]['faces']
+    mesh_uv_a = obj_mesh_a['geometry'][filename_uv]['visual'].uv
     mesh_uv_b = obj_mesh_b['geometry'][filename_uv]['visual'].uv
     uv_transform = np.zeros(mesh_vertices_b.shape[0], np.int64)
     for face_index in range(0, mesh_faces_b.shape[0]):
         for vertex_index in range(0, 3):
             uv_transform[mesh_faces_b[face_index, vertex_index]] = mesh_faces_a[face_index, vertex_index]
-    return (uv_transform, mesh_faces_a, mesh_faces_b, mesh_uv_b) # tuple return
+    return (mesh_vertices_a, mesh_vertices_b, mesh_faces_a, mesh_faces_b, mesh_uv_a, mesh_uv_b, uv_transform) # tuple return
 
 
 def texture_load_font(font_name, font_size):
@@ -1301,7 +1303,7 @@ class renderer:
         self._smpl_control = smpl_model(model_path, num_betas, device)
     
     def smpl_load_uv(self, filename_uv, texture_shape):
-        self._uv_transform, self._mesh_a_faces, self._mesh_b_faces, self._mesh_b_uv = texture_load_uv(filename_uv)
+        _, _, self._mesh_a_faces, self._mesh_b_faces, _, self._mesh_b_uv, self._uv_transform = texture_load_uv(filename_uv)
         self._mesh_b_uvx = texture_uv_to_uvx(self._mesh_b_uv.copy(), texture_shape)
         self._texture_shape = texture_shape
 
