@@ -4,3 +4,7 @@ data/smpl_uv.obj
 data/smpl/SMPL_NEUTRAL.pkl
 /__pycache__
 data/test_camerahmr_message.txt
+data/smpl_face_segmentation.json
+data/smpl_segmentation_on_template.png
+data/smpl_vert_segmentation.json
+smpl_notes.txt
