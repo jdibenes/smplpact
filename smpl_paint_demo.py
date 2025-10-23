@@ -97,7 +97,7 @@ class demo:
         self._offscreen_renderer.smpl_load_uv(self._smpl_uv_path, self._texture_array.shape)
 
         # Load test CameraHMR message
-        with open(self._smpl_test_message_path, 'r') as json_file:
+        with open(self._smpl_test_message_path, 'rt') as json_file:
             test_camerahmr_message = json.load(json_file)
 
         # SMPL regions
