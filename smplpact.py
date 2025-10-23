@@ -272,17 +272,17 @@ def mesh_select_vertices(mesh, origin_vertex_index, radius, level):
 def mesh_select_complete_faces(mesh, vertex_indices):
     vertex_faces = mesh.vertex_faces
     faces = mesh.faces.view(np.ndarray)
+    face_indices_seen = set()
     face_indices_complete = set()
     vertex_indices_complete = set()
-    vertex_indices_seen = set()
-
+    
     for vertex_index in vertex_indices:
-        if (vertex_index not in vertex_indices_seen):
-            for face_index in vertex_faces[vertex_index, :]:
-                if (face_index < 0):
-                    break
+        for face_index in vertex_faces[vertex_index, :]:
+            if (face_index < 0):
+                break
+            if (face_index not in face_indices_seen):
+                face_indices_seen.add(face_index)
                 face_vertices = faces[face_index]
-                vertex_indices_seen.update(face_vertices)
                 keep = all([face_vertex in vertex_indices for face_vertex in face_vertices])
                 if (keep):
                     face_indices_complete.add(face_index)
