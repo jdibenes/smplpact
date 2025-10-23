@@ -1,5 +1,6 @@
 
 import json
+import numpy as np
 import smplpact
 
 filename_uv = './data/smpl_uv.obj'
@@ -14,10 +15,20 @@ with open(filename_v, 'rt') as file_v:
 
 face_segmentation = {}
 
+faces = mesh_a.faces.view(np.ndarray)
+vertices = mesh_a.vertices.view(np.ndarray)
+
 for k, v in vert_segmentation.items():
-    face_indices = smplpact.mesh_faces_of_vertices(mesh_a, v)
-    face_segmentation[k] = [int(face_index) for face_index in face_indices]
-    print(f'Processed {k}')
+    face_indices = list(smplpact.mesh_faces_of_vertices(mesh_a, v))
+    face_centroids = np.vstack([np.mean(vertices[faces[face_index], :], axis=0).reshape((1, -1)) for face_index in face_indices])
+    limb_centroid = np.mean(face_centroids, axis=0).reshape((1, -1))
+    face_offsets = face_centroids - limb_centroid
+    u, s, vh = np.linalg.svd(face_offsets)
+    dv = vh[0:1, :]
+    dp = (face_offsets @ dv.T).reshape((-1,))
+    di = np.argsort(dp)
+    face_segmentation[k] = [int(face_indices[i]) for i in di]
+    print(f'Processed {k}: {len(face_segmentation[k])}')
 
 with open(filename_f, 'wt') as file_f:
     json.dump(face_segmentation, file_f, indent=4)
