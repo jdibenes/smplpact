@@ -380,11 +380,14 @@ class mesh_neighborhood_processor:
             if ((time.perf_counter() - start) >= timeout):
                 break
 
+    def status(self):
+        return self._mnb.level()
+
     def done(self):
         return self._done
 
 
-class mesh_neighborhood_processor_list:
+class mesh_list_processor:
     def __init__(self, face_list, callback):
         self._face_list = face_list
         self._face_index = 0
@@ -394,11 +397,12 @@ class mesh_neighborhood_processor_list:
 
     def invoke(self, max_iterations):
         for _ in range(0, max_iterations):
+            if (self._face_index < self._face_count):
+                self._callback(self._face_list[self._face_index], -1)
+                self._face_index += 1
             if (self._face_index >= self._face_count):
                 self._done = True
                 break
-            self._callback(self._face_list[self._face_index], -1)
-            self._face_index += 1
         
     def invoke_timeslice(self, timeout, steps=1):
         start = time.perf_counter()
@@ -643,7 +647,7 @@ class paint_decal_solid:
 
 def painter_create_color(mesh_a, mesh_b, mesh_uvx, uv_transform, face_index, origin, color, tolerance=0, fixed=False):
     mno = mesh_neighborhood_operation_color(mesh_b.vertices.view(np.ndarray), mesh_b.faces.view(np.ndarray), mesh_uvx, color, tolerance)
-    mnp = mesh_neighborhood_processor(mesh_a, {face_index}, mno.paint) if (not fixed) else mesh_neighborhood_processor_list(face_index, mno.paint)
+    mnp = mesh_neighborhood_processor(mesh_a, {face_index}, mno.paint) if (not fixed) else mesh_list_processor(face_index, mno.paint)
     return mnp
 
 
@@ -774,24 +778,15 @@ class mesh_chart:
 
 def smpl_camera_align(K_smpl, K_dst, points_world):
     n = points_world.shape[0]
-    N = 2 * n
-    A = np.zeros((N, 3), dtype=points_world.dtype)
-    b = np.zeros((N, 1), dtype=points_world.dtype)
-    fxy = K_dst.reshape((-1))[[0, 4]]
-
-    points_camera = points_world @ K_smpl
-    points_image = points_camera[:, 0:2] / points_camera[:, 2:3]
-    a = K_dst[2:3, 0:2] - points_image
-    w = -(a * points_world[:, 2:3] + fxy * points_world[:, 0:2])
-
-    A[0:n, 0] = fxy[0]
-    A[n:N, 1] = fxy[1]
-    A[0:n, 2] = a[:, 0]
-    A[n:N, 2] = a[:, 1]
-    b[0:n, 0] = w[:, 0]
-    b[n:N, 0] = w[:, 1]
-
-    return np.linalg.lstsq(A, b)[0].T
+    K = K_smpl @ np.linalg.inv(K_dst)
+    b = points_world @ (K - np.eye(3, dtype=points_world.dtype))
+    a = (points_world / points_world[:, 2:3]) @ K
+    f = np.ones((n, 1), dtype=points_world.dtype)
+    z = np.zeros((n, 1), dtype=points_world.dtype)
+    e = np.vstack((np.hstack((f, z, -a[:, 0:1])), np.hstack((z, f, -a[:, 1:2]))))
+    s = np.vstack((b[:, 0:1], b[:, 1:2]))
+    t, res, rank, sv = np.linalg.lstsq(e, s)
+    return t.T
 
 
 class smpl_mesh_chart_openpose(mesh_chart):
