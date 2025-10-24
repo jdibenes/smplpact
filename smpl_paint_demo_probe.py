@@ -1,10 +1,7 @@
 #------------------------------------------------------------------------------
-# SMPL paint demo
+# SMPL Probe Paint demo
 #
 # Keyboard Controls:
-# 1: Focus next SMPL region
-# 2/3: Increment/Decrement Cursor offset
-# 4/5: Increment/Decrement Cursor yaw
 # d/a: Increment/Decrement Camera yaw
 # w/s: Increment/Decrement Camera pitch
 # r/f: Zoom In/Out
@@ -28,17 +25,12 @@ class demo:
         # Settings
         self._device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
-        #31_1761162056606021415
-        #10837_1761162167205069604
-        #10745_1761162166274772790
-
         self._smpl_test_message_path = 'C:/Users/jcds/Desktop/Oct_22_stevens/output_pairs/31_1761162056606021415/pose.json'
         self._probe_test_message_path = 'C:/Users/jcds/Desktop/Oct_22_stevens/output_pairs/31_1761162056606021415/aruco.json'
         self._test_image_path = "C:/Users/jcds/Desktop/Oct_22_stevens/output_pairs/31_1761162056606021415/realsense_image.jpg"
         self._smpl_model_path = './data/smpl/SMPL_NEUTRAL.pkl'
         self._smpl_uv_path = './data/smpl_uv.obj'
         self._smpl_texture_path = './data/textures/f_01_alb.002_1k.png'
-        self._smpl_face_seg_path = './data/smpl_face_segmentation.json'
         self._smpl_texture_load_alpha = False
         
         self._viewport_width = 1280
@@ -49,31 +41,14 @@ class demo:
         self._camera_pitch_increment = 10
         self._camera_distance_increment = 0.1
         self._camera_use_plane = True
-        self._camera_focus_factor = 1.25
 
-        self._text_font_name = 'arial.ttf'
-        self._text_font_size = 512
-        self._text_font_color = (255, 0, 0, 255)
-        self._text_canvas_color = (255, 255, 255, 255)
-        self._text_stroke_width = 1
-        self._text_content = ['Probe', 'Here']
-        self._text_line_spacing = 20
-        self._text_pad_horizontal_ratio = 0.05
-        self._text_pad_vertical_ratio = 0.1
-        
         self._cursor_radius = 0.015
         self._cursor_height = 0.04
-        self._cursor_offset_increment = 0.02
-        self._cursor_angle_increment = np.radians(10)
 
-        self._brush_size = 0.01
+        self._brush_size = 0.02
         self._brush_color_center = np.array([255, 0, 0, 255], dtype=np.uint8)
         self._brush_color_edge = np.array([255, 255, 0, 255], dtype=np.uint8)
         self._brush_hardness = 0.33
-        self._decal_size = 10000 * 2
-        self._decal_angle = 0
-        self._joint_projection_radius = 3
-        self._joint_projection_color = [255, 0, 255]
 
         self._fps_period = 2.0
         # End Settings
@@ -86,16 +61,10 @@ class demo:
         cfg_offscreen = smplpact.renderer_create_settings_offscreen(self._viewport_width, self._viewport_height)
         cfg_scene = smplpact.renderer_create_settings_scene()
         cfg_camera = smplpact.renderer_create_settings_camera(fxy, fxy, self._viewport_width // 2, self._viewport_height // 2)
-        cfg_camera_transform = smplpact.renderer_create_settings_camera_transform(distance=0, znear=0)
+        cfg_camera_transform = smplpact.renderer_create_settings_camera_transform()
         cfg_lamp = smplpact.renderer_create_settings_lamp()
         
         self._offscreen_renderer = smplpact.renderer(cfg_offscreen, cfg_scene, cfg_camera, cfg_camera_transform, cfg_lamp)
-
-        # Create sample text texture
-        font = smplpact.texture_load_font(self._text_font_name, self._text_font_size)
-        self._test_text = smplpact.texture_create_multiline_text(self._text_content, font, self._text_font_color, self._text_canvas_color, self._text_stroke_width, self._text_line_spacing)       
-        self._test_text = smplpact.texture_pad(self._test_text, self._text_pad_horizontal_ratio, self._text_pad_vertical_ratio, self._text_canvas_color)
-
         # Load SMPL texture
         self._texture_array = smplpact.texture_load_image(self._smpl_texture_path, load_alpha=self._smpl_texture_load_alpha)
 
@@ -107,27 +76,19 @@ class demo:
         with open(self._smpl_test_message_path, 'rt') as json_file:
             test_camerahmr_message = json.load(json_file)
 
-        with open(self._smpl_face_seg_path, 'rt') as seg_file:
-            self._face_segmentation = json.load(seg_file)
-
+        # Load test probe message
         with open(self._probe_test_message_path, 'rt') as probe_file:
             self._probe_message = json.load(probe_file)
 
+        # Load test image
         self._test_image = cv2.imread(self._test_image_path, cv2.IMREAD_COLOR_BGR)
-        self._K = np.array([[1361.8736572265625, 0, 963.2017211914062],[0, 1361.03076171875, 552.251220703125],[0,0,1]], dtype=np.float32)
 
-        self._color_task = None
-
-        # SMPL regions
-        self._smpl_regions = ['body_center', 'thigh_left', 'thigh_right', 'lower_leg_left', 'lower_leg_right', 'foot_left', 'foot_right', 'head_center', 'upper_arm_left', 'upper_arm_right', 'lower_arm_left', 'lower_arm_right']
-        self._smpl_region_index = 0
-        self._smpl_region = self._smpl_regions[self._smpl_region_index]
+        # Load realsense intrinsics
+        self._K = np.array([[1361.8736572265625, 0, 963.2017211914062],[0, 1361.03076171875, 552.251220703125],[0, 0, 1]], dtype=np.float32)
         
         # Create UI elements
         self._cursor_mesh = trimesh.creation.cone(radius=self._cursor_radius, height=self._cursor_height)
         self._cursor_pose = np.eye(4, dtype=np.float32)
-        self._cursor_offset = 0
-        self._cursor_angle = 0
 
         # Run inference and painting
         start = time.perf_counter()
@@ -150,97 +111,49 @@ class demo:
         smpl_joints = smpl_result.joints_world[0]
         smpl_faces = smpl_result.faces
         
-
         cliff_image_size = camerahmr_message['image_size']
         cliff_focal_length = camerahmr_message['persons'][0]['focal_length']
 
-        #self._K_smpl = np.array([[2202.9072265625, 0, 1920//2],[0, 2202.9072265625, 1080//2],[0,0,1]])
-        self._K_smpl = np.array([[cliff_focal_length, 0, cliff_image_size[0]//2],[0, cliff_focal_length, cliff_image_size[1]//2],[0,0,1]], dtype=np.float32) 
+        self._K_smpl = np.array([[cliff_focal_length, 0, cliff_image_size[0]//2],[0, cliff_focal_length, cliff_image_size[1]//2],[0, 0, 1]], dtype=np.float32) 
         smpl_t = smplpact.smpl_camera_align(self._K_smpl.T, self._K.T, smpl_joints)
-        print(smpl_t)
 
-        smpl_vertices += smpl_t
-        smpl_joints += smpl_t
+        smpl_vertices = smpl_vertices + smpl_t
+        smpl_joints = smpl_joints + smpl_t
 
         smpl_mesh = smplpact.mesh_create(smpl_vertices, smpl_faces, visual=None)
 
         # Compute pose to set mesh upright
         # Poses convert from object to world
-        #smpl_mesh_pose = np.linalg.inv(smplpact.smpl_mesh_chart_openpose(smpl_mesh, smpl_joints).create_frame('body_center').to_pose()).T
-        smpl_mesh_pose = np.eye(4, dtype=np.float32)
+        smpl_mesh_pose = np.linalg.inv(smplpact.smpl_mesh_chart_openpose(smpl_mesh, smpl_joints).create_frame('body_center').to_pose()).T
 
         # Add SMPL mesh to the main scene
         smpl_mesh_id = self._offscreen_renderer.mesh_add_smpl('smpl', 'patient', smpl_mesh, smpl_joints, self._texture_array, smpl_mesh_pose)
 
-        self._offscreen_renderer._scene_control._camera_set_pose(np.array([[1,0,0,0],[0,-1,0,0],[0,0,-1,0],[0,0,0,1]], dtype=np.float32))
-
-        # Change focus region when key is pressed
-        # Camera orientation is preserved
-        # Cursor coordinates are reset
-        smpl_next_region = self._smpl_regions[self._smpl_region_index]
-        
-        if (smpl_next_region != self._smpl_region):
-            smpl_frame = self._offscreen_renderer.smpl_chart_create_frame(smpl_mesh_id, smpl_next_region)
-            
-            focus_center = smplpact.math_transform_points(smpl_frame.center, smpl_mesh_pose.T, inverse=False)
-            focus_points = smplpact.math_transform_points(smpl_frame.points, smpl_mesh_pose.T, inverse=False)
-            focus_distance = self._offscreen_renderer.camera_solve_fov_z(focus_center, focus_points)
-
-            self._offscreen_renderer.camera_adjust_parameters(center=focus_center, distance=self._camera_focus_factor * focus_distance, relative=False)
-            self._cursor_offset = 0
-            self._cursor_angle = 0
-            self._smpl_region = smpl_next_region
-
-        # Map current cylindrical coordinates to SMPL mesh point and face
-        smpl_frame = self._offscreen_renderer.smpl_chart_create_frame(smpl_mesh_id, self._smpl_region)
-        cursor_anchor = self._offscreen_renderer.smpl_chart_from_cylindrical(smpl_mesh_id, smpl_frame, self._cursor_offset, self._cursor_angle)
-
-        # Set cursor position based on cylindrical coordinates
-        # smpl_anchor.point is None when outside mesh
-        local_cursor_orientation = np.vstack((np.cross(smpl_frame.up, -cursor_anchor.direction), smpl_frame.up, -cursor_anchor.direction))
-        local_cursor_position = (cursor_anchor.point + self._cursor_height * cursor_anchor.direction) if (cursor_anchor.point is not None) else cursor_anchor.position
-        #self._cursor_pose[0:3, :3] = smplpact.math_transform_bearings(local_cursor_orientation, smpl_mesh_pose.T, inverse=False)
-        #self._cursor_pose[3:4, :3] = smplpact.math_transform_points(local_cursor_position, smpl_mesh_pose.T, inverse=False)
-        probe_pos = np.array([self._probe_message['x'], self._probe_message['y'], self._probe_message['z']], dtype=np.float32).reshape(1, 3)
-        probe_pos = np.array([self._probe_message['x'], self._probe_message['y'], self._probe_message['z']], dtype=np.float32).reshape(1, 3)
-        probe_pos *= 1.4
-        self._cursor_pose[3:4, :3] = smplpact.math_transform_points(probe_pos, smpl_mesh_pose.T, inverse=False)
+        # Set probe position
+        probe_position = np.array([[self._probe_message['x'], self._probe_message['y'], self._probe_message['z']]], dtype=np.float32)
+        probe_position *= 0.94 # heuristic
+        self._cursor_pose[3:4, :3] = smplpact.math_transform_points(probe_position, smpl_mesh_pose.T, inverse=False)
         
         # Add cursor to the main scene
         cursor_pose = self._cursor_pose.T
         cursor_mesh_id = self._offscreen_renderer.mesh_add_user('ui', 'cursor', self._cursor_mesh, cursor_pose)
 
-        # Perform ray casting from camera to mesh
-        # This will be used to paint on the mesh where the camera is looking
-        #camera_pose = self._offscreen_renderer.camera_get_transform_local()
-        #camera_position = camera_pose[:3, 3:4].T
-        #camera_forward = -camera_pose[:3, 2:3].T
-        #camera_anchor = self._offscreen_renderer.mesh_operation_raycast(smpl_mesh_id, camera_position, camera_forward)
-
-        # If raycast did not intersect the mesh then use the closest mesh point
-        #if (camera_anchor.point is None):
-        #    camera_anchor = self._offscreen_renderer.mesh_operation_closest(smpl_mesh_id, camera_position)
+        # Find closest point to mesh
+        cursor_anchor = self._offscreen_renderer.mesh_operation_closest(smpl_mesh_id, self._cursor_pose[3:4, :3])
 
         # Paint SMPL mesh
-        # Paint decal at cursor position
-        if (self._color_task is None):
-            self._color_task = self._offscreen_renderer.smpl_paint_color_solid(smpl_mesh_id, self._face_segmentation['leftUpLeg'], self._brush_color_center, 1, timeout=0.5, fixed=True, manual=True, color_id=-3, task_id=-3)
-
-            # Fix loose degree of freedom about face normal, required to maintain consistent orientation
-            #decal_align_prior = self._offscreen_renderer.smpl_paint_decal_align_prior(smpl_mesh_id, cursor_anchor, smpl_frame.up, smpl_frame.front)
-            #self._offscreen_renderer.smpl_paint_decal_solid(smpl_mesh_id, cursor_anchor, self._test_text, decal_align_prior, self._decal_angle, self._decal_size, double_cover_test=False, fill_test=0.25)
-            
         # Paint circular gradient at camera mesh intersection/closest
-        #if (camera_anchor.point is not None):
-            #self._offscreen_renderer.smpl_paint_brush_gradient(smpl_mesh_id, camera_anchor, self._brush_size, self._brush_color_center, self._brush_color_edge, self._brush_hardness, fill_test=0.25)
+        if (cursor_anchor.point is not None):
+            # Gradient option
+            #self._offscreen_renderer.smpl_paint_brush_gradient(smpl_mesh_id, cursor_anchor, self._brush_size, self._brush_color_center, self._brush_color_edge, self._brush_hardness, fill_test=0.25)
             # Solid color option
-            #self._offscreen_renderer.smpl_paint_brush_solid(smpl_mesh_id, camera_anchor, self._brush_size, self._brush_color_center, fill_test=0.25)
+            self._offscreen_renderer.smpl_paint_brush_solid(smpl_mesh_id, cursor_anchor, self._brush_size, self._brush_color_center, fill_test=0.25)
         
         # Finalize SMPL painting
         # Compute painted texture
         self._offscreen_renderer.smpl_paint_flush(smpl_mesh_id)
         # Remove painting for next frame (comment out to keep paintings across frames)
-        #self._offscreen_renderer.smpl_paint_clear(smpl_mesh_id)
+        self._offscreen_renderer.smpl_paint_clear(smpl_mesh_id)
 
         # Finalize mesh processing
         self._offscreen_renderer.mesh_present_smpl(smpl_mesh_id)
@@ -249,59 +162,12 @@ class demo:
         # Render
         color, depth = self._offscreen_renderer.scene_render()
 
-        # Render focused joints
-        color = color.copy()
-        world_points = smplpact.math_transform_points(smpl_frame.points, smpl_mesh_pose.T, inverse=False)
-        image_points, local_points, camera_points = self._offscreen_renderer.camera_project_points(world_points, convention=(1, -1, -1))
-
-        for i in range(0, image_points.shape[0]):
-            if (local_points[i, 2] > 0):
-                center = (int(image_points[i, 0]), int(image_points[i, 1]))
-                color = cv2.circle(color, center, self._joint_projection_radius, self._joint_projection_color, -1)
-
-        probe_image = probe_pos @ self._K.T
-        probe_image = probe_image / probe_image[:, 2:3]
-
-        cv2.circle(self._test_image, (int(probe_image[0, 0]), int(probe_image[0, 1])), self._joint_projection_radius, self._joint_projection_color, -1)
-
-
-
-        
-
-
-        joints_image = (smpl_joints) @ self._K.T
-        depth = joints_image[:, 2:3]
-        joints_image = joints_image / joints_image[:, 2:3]
-        #print(depth)
-
-        for i in range(0, joints_image.shape[0]):
-            center = (int(joints_image[i, 0]), int(joints_image[i, 1]))
-            cv2.circle(self._test_image, center, self._joint_projection_radius, self._joint_projection_color, -1)
-
         # Show rendered image
-        cv2.imshow('SMPL Paint Demo', cv2.cvtColor(color, cv2.COLOR_RGB2BGR))
-        cv2.imshow('Test image', self._test_image)
+        cv2.imshow('SMPL Paint Demo', cv2.cvtColor(color, cv2.COLOR_RGB2BGR))        
 
         # Process keyboard input
         key = cv2.waitKey(1) & 0xFF
-
-        if (key == 81 or key == 113): # q
-            cur, cnt = self._color_task.status()
-            print(f'color faces {cur}/{cnt}')
-            self._color_task.invoke(1)
-
-        if (key == 49): # 1:
-            self._smpl_region_index = (self._smpl_region_index + 1) % len(self._smpl_regions)
  
-        if (key == 50): # 2:
-            self._cursor_offset += self._cursor_offset_increment
-        if (key == 51): # 3
-            self._cursor_offset -= self._cursor_offset_increment
-        if (key == 52): # 4 
-            self._cursor_angle += self._cursor_angle_increment
-        if (key == 53): # 5
-            self._cursor_angle -= self._cursor_angle_increment
-
         if (key == 68 or key == 100): # d
             self._offscreen_renderer.camera_adjust_parameters(yaw=self._camera_yaw_increment, relative=True)
         if (key == 65 or key == 97): # a
@@ -357,19 +223,3 @@ def main():
 if __name__ == '__main__':
     main()
 
-
-
-
-
-    '''
-    eq = []
-    for i in range(0, points_world.shape[0]):
-        p = points_world[i, :]
-        ax = cx_d - fx_s * (p[0] / p[2]) - cx_s
-        ay = cy_d - fy_s * (p[1] / p[2]) - cy_s
-        eq.append([fx_d, 0, ax, ax*p[2] + fx_d*p[0]])
-        eq.append([0, fy_d, ay, ay*p[2] + fy_d*p[1]])
-    eq = np.array(eq, dtype=np.float32)
-    print(eq.shape)
-    return np.linalg.lstsq(eq[:, 0:3], -eq[:, 3:4])[0].T
-    '''
