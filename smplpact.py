@@ -796,6 +796,12 @@ def smpl_camera_align_Rt(K_smpl, K_dst, points_world):
     return (R.T, t.T)
 
 
+def smpl_camera_align_dz(K_smpl, K_dst, points_world):
+    K = K_smpl @ np.linalg.inv(K_dst)
+    s = (K[0,0] + K[1,1]) / 2
+    return ((1/s)*K, 0)
+
+
 class smpl_mesh_chart_openpose(mesh_chart):
     def __init__(self, mesh, joints):
         super().__init__(mesh)
