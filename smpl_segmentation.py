@@ -27,7 +27,10 @@ for k, v in vert_segmentation.items():
     dv = vh[0:1, :]
     dp = (face_offsets @ dv.T).reshape((-1,))
     di = np.argsort(dp)
-    face_segmentation[k] = [int(face_indices[i]) for i in di]
+    result = [int(face_indices[i]) for i in di]
+    if (k == 'rightUpLeg'):
+        result.reverse()
+    face_segmentation[k] = result
     print(f'Processed {k}: {len(face_segmentation[k])}')
 
 with open(filename_f, 'wt') as file_f:
