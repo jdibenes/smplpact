@@ -776,7 +776,7 @@ class mesh_chart:
 # SMPL Chart
 #------------------------------------------------------------------------------
 
-def smpl_camera_align(K_smpl, K_dst, points_world):
+def smpl_camera_align_It(K_smpl, K_dst, points_world):
     n = points_world.shape[0]
     K = K_smpl @ np.linalg.inv(K_dst)
     b = points_world @ (K - np.eye(3, dtype=points_world.dtype))
@@ -786,7 +786,14 @@ def smpl_camera_align(K_smpl, K_dst, points_world):
     e = np.vstack((np.hstack((f, z, -a[:, 0:1])), np.hstack((z, f, -a[:, 1:2]))))
     s = np.vstack((b[:, 0:1], b[:, 1:2]))
     t, res, rank, sv = np.linalg.lstsq(e, s)
-    return t.T
+    return (np.eye(3, dtype=points_world.dtype), t.T)
+
+
+def smpl_camera_align_Rt(K_smpl, K_dst, points_world):
+    u = np.ascontiguousarray(((points_world / points_world[:, 2:3]) @ K_smpl)[:, 0:2])
+    ok, r, t = cv2.solvePnP(points_world, u, K_dst.T, None, flags=cv2.SOLVEPNP_SQPNP)
+    R = cv2.Rodrigues(r)[0]
+    return (R.T, t.T)
 
 
 class smpl_mesh_chart_openpose(mesh_chart):
