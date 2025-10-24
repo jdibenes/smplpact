@@ -1,5 +1,5 @@
 #------------------------------------------------------------------------------
-# SMPL paint demo
+# SMPL Leg Paint Based on Progress demo
 #
 # Keyboard Controls:
 # q: Simulate Progress
