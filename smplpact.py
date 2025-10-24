@@ -997,12 +997,10 @@ class smpl_mesh_chart_openpose(mesh_chart):
 
 
 class smpl_model_result:
-    def __init__(self, vertices, vertices_world, faces, joints, joints_world):
+    def __init__(self, vertices, faces, joints):
         self.vertices = vertices
-        self.vertices_world = vertices_world
         self.faces = faces
         self.joints = joints
-        self.joints_world = joints_world
 
 
 class smpl_model:
@@ -1012,16 +1010,11 @@ class smpl_model:
         self._smpl_model = smplx.SMPLLayer(model_path=model_path, num_betas=num_betas).to(device)
         self._smpl_to_open_pose = torch.tensor(smpl_model._SMPL_TO_OPENPOSE, dtype=torch.long, device=device)
 
-    def to_mesh(self, smpl_params, camera_translation, openpose_joints=True):
+    def to_mesh(self, smpl_params, openpose_joints=True):
         smpl_output = self._smpl_model(**smpl_params)
         vertices = smpl_output.vertices
         joints = smpl_output.joints.index_select(1, self._smpl_to_open_pose) if (openpose_joints) else smpl_output.joints
-        t = camera_translation.unsqueeze(1)
-        vertices_world = (vertices + t).detach().cpu().numpy()
-        joints_world = (joints + t).detach().cpu().numpy()
-        vertices = vertices.cpu().numpy()
-        joints = joints.cpu().numpy()
-        return smpl_model_result(vertices, vertices_world, self._smpl_model.faces, joints, joints_world)
+        return smpl_model_result(vertices.cpu().numpy(), self._smpl_model.faces, joints.cpu().numpy())
 
 
 #------------------------------------------------------------------------------
@@ -1431,8 +1424,8 @@ class renderer:
         self._mesh_b_uvx = texture_uv_to_uvx(self._mesh_b_uv.copy(), texture_shape)
         self._texture_shape = texture_shape
 
-    def smpl_get_mesh(self, smpl_params, camera_translation) -> smpl_model_result:
-        return self._smpl_control.to_mesh(smpl_params, camera_translation)
+    def smpl_get_mesh(self, smpl_params) -> smpl_model_result:
+        return self._smpl_control.to_mesh(smpl_params)
 
     def camera_get_pose(self):
         return self._scene_control.camera_get_pose()
