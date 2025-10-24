@@ -772,6 +772,28 @@ class mesh_chart:
 # SMPL Chart
 #------------------------------------------------------------------------------
 
+def smpl_camera_align(K_smpl, K_dst, points_world):
+    n = points_world.shape[0]
+    N = 2 * n
+    A = np.zeros((N, 3), dtype=points_world.dtype)
+    b = np.zeros((N, 1), dtype=points_world.dtype)
+    fxy = K_dst.reshape((-1))[[0, 4]]
+
+    points_camera = points_world @ K_smpl
+    points_image = points_camera[:, 0:2] / points_camera[:, 2:3]
+    a = K_dst[2:3, 0:2] - points_image
+    w = -(a * points_world[:, 2:3] + fxy * points_world[:, 0:2])
+
+    A[0:n, 0] = fxy[0]
+    A[n:N, 1] = fxy[1]
+    A[0:n, 2] = a[:, 0]
+    A[n:N, 2] = a[:, 1]
+    b[0:n, 0] = w[:, 0]
+    b[n:N, 0] = w[:, 1]
+
+    return np.linalg.lstsq(A, b)[0].T
+
+
 class smpl_mesh_chart_openpose(mesh_chart):
     def __init__(self, mesh, joints):
         super().__init__(mesh)
