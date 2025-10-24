@@ -105,33 +105,37 @@ class demo:
     def _loop(self, camerahmr_message):
         # SMPL params to mesh
         person_list = camerahmr_message['persons']
-        smpl_params, camera_translation = self.smpl_unpack_cliff(person_list)
-        smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, camera_translation)
-        smpl_vertices = smpl_result.vertices_world[0]
-        smpl_joints = smpl_result.joints_world[0]
+        smpl_params = self.smpl_unpack_cliff(person_list)
+        smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params)
+        smpl_vertices = smpl_result.vertices[0]
+        smpl_joints = smpl_result.joints[0]
         smpl_faces = smpl_result.faces
-        
+
         cliff_image_size = camerahmr_message['image_size']
-        cliff_focal_length = camerahmr_message['persons'][0]['focal_length']
-
+        cliff_scale = 1#camerahmr_message['persons'][0]['scale']
+        cliff_focal_length = cliff_scale * camerahmr_message['persons'][0]['focal_length']        
         self._K_smpl = np.array([[cliff_focal_length, 0, cliff_image_size[0]//2],[0, cliff_focal_length, cliff_image_size[1]//2],[0, 0, 1]], dtype=np.float32) 
-        smpl_t = smplpact.smpl_camera_align(self._K_smpl.T, self._K.T, smpl_joints)
 
-        smpl_vertices = smpl_vertices + smpl_t
-        smpl_joints = smpl_joints + smpl_t
+        #smpl_R, smpl_t = smplpact.smpl_camera_align_It(self._K_smpl.T, self._K.T, smpl_joints)
+        #smpl_R, smpl_t = smplpact.smpl_camera_align_Rt(self._K_smpl.T, self._K.T, smpl_joints)
+        smpl_R, smpl_t = smplpact.smpl_camera_align_dz(self._K_smpl.T, self._K.T, smpl_joints)
+
+        smpl_vertices = smpl_vertices @ smpl_R + smpl_t
+        smpl_joints = smpl_joints @ smpl_R + smpl_t
 
         smpl_mesh = smplpact.mesh_create(smpl_vertices, smpl_faces, visual=None)
 
         # Compute pose to set mesh upright
         # Poses convert from object to world
         smpl_mesh_pose = np.linalg.inv(smplpact.smpl_mesh_chart_openpose(smpl_mesh, smpl_joints).create_frame('body_center').to_pose()).T
+        #smpl_mesh_pose = np.eye(4, dtype=np.float32)
 
         # Add SMPL mesh to the main scene
         smpl_mesh_id = self._offscreen_renderer.mesh_add_smpl('smpl', 'patient', smpl_mesh, smpl_joints, self._texture_array, smpl_mesh_pose)
 
         # Set probe position
         probe_position = np.array([[self._probe_message['x'], self._probe_message['y'], self._probe_message['z']]], dtype=np.float32)
-        probe_position *= 0.94 # heuristic
+        #probe_position *= 0.94 # heuristic
         self._cursor_pose[3:4, :3] = smplpact.math_transform_points(probe_position, smpl_mesh_pose.T, inverse=False)
         
         # Add cursor to the main scene
@@ -162,8 +166,36 @@ class demo:
         # Render
         color, depth = self._offscreen_renderer.scene_render()
 
+        joints_image = (smpl_joints) @ self._K.T
+        joints_image = joints_image / joints_image[:, 2:3]
+
+        #smpl_joints_1 = smpl_result.joints[1]
+
+        #joints_image = (smpl_joints_1) @ self._K_smpl.T
+        #joints_image = joints_image / joints_image[:, 2:3]
+
+        joints_image_ref = (smpl_joints - smpl_t) @ np.linalg.inv(smpl_R) @ self._K_smpl.T
+        joints_image_ref = joints_image_ref / joints_image_ref[:, 2:3]
+
+
+
+
+        print('RES')
+        print(np.mean(np.linalg.norm(joints_image - joints_image_ref, axis=1), axis=0))
+
+        #print(depth)
+
+        for i in range(0, joints_image.shape[0]):
+            center = (int(joints_image[i, 0]), int(joints_image[i, 1]))
+            cv2.circle(self._test_image, center, 5, (255, 0, 255), -1)
+
+        for i in range(0, joints_image_ref.shape[0]):
+            center = (int(joints_image_ref[i, 0]), int(joints_image_ref[i, 1]))
+            cv2.circle(self._test_image, center, 5, (0, 255, 0))
+        cv2.imshow('Test image', self._test_image)
+
         # Show rendered image
-        cv2.imshow('SMPL Paint Demo', cv2.cvtColor(color, cv2.COLOR_RGB2BGR))        
+        cv2.imshow('SMPL Paint Demo', cv2.cvtColor(color, cv2.COLOR_RGB2BGR))
 
         # Process keyboard input
         key = cv2.waitKey(1) & 0xFF
@@ -202,18 +234,18 @@ class demo:
         global_orient = torch.tensor([person['smpl_params']['global_orient'] for person in person_list], dtype=torch.float32, device=self._device)
         body_pose = torch.tensor([person['smpl_params']['body_pose'] for person in person_list], dtype=torch.float32, device=self._device)
         betas = torch.tensor([person['smpl_params']['betas'] for person in person_list], dtype=torch.float32, device=self._device)
-        smpl_params = { 'global_orient' : global_orient, 'body_pose' : body_pose, 'betas' : betas }
         camera_translation = torch.tensor([person['camera_translation'] for person in person_list], dtype=torch.float32, device=self._device)
-        return smpl_params, camera_translation
+        smpl_params = { 'global_orient' : global_orient, 'body_pose' : body_pose, 'betas' : betas, 'transl' : camera_translation }
+        return smpl_params
     
     def smpl_unpack_cliff(self, person_list):
         smpl_pose = torch.tensor([person['smpl_pose'] for person in person_list], dtype=torch.float32, device=self._device)
         global_orient = smpl_pose[:, 0:1, :, :]
         body_pose = smpl_pose[:, 1:, :, :]
         betas = torch.tensor([person['smpl_shape'] for person in person_list], dtype=torch.float32, device=self._device)
-        smpl_params = { 'global_orient' : global_orient, 'body_pose' : body_pose, 'betas' : betas }
         camera_translation = torch.tensor([person['camera_params'] for person in person_list], dtype=torch.float32, device=self._device)
-        return smpl_params, camera_translation
+        smpl_params = { 'global_orient' : global_orient, 'body_pose' : body_pose, 'betas' : betas, 'transl' : camera_translation }
+        return smpl_params
 
 
 def main():
