@@ -651,11 +651,10 @@ class paint_decal_solid:
 
         double_cover = self._test_double_cover(vxd)
 
-        self._push_simplex(np.vstack((vxd[:, 0:2], vqd[:, 0:2], vpd[:, 0:2])))
-
         if (double_cover):
             return mesh_neighborhood_processor_command.IGNORE
 
+        self._push_simplex(np.vstack((vxd[:, 0:2], vqd[:, 0:2], vpd[:, 0:2])))
         self._image_uvx[vixs_a:(vixs_a + 1), :] = vxd
 
         return mesh_neighborhood_processor_command.EXPAND
