@@ -358,27 +358,34 @@ class mesh_neighborhood_processor:
         self._done = False
 
     def invoke(self, max_iterations):
+        tpdl = []
         for _ in range(0, max_iterations):
             if (len(self._expand_faces) > 0):
                 self._faces = self._mnb.fetch(self._expand_faces, self._ignore_faces)
                 self._expand_faces.clear()
                 self._ignore_faces.clear()
             for face_anchor in self._faces:
-                code = self._callback(face_anchor, self._mnb.level())
+                result = self._callback(face_anchor, self._mnb.level())
+                code = result[0]
                 if (code == mesh_neighborhood_processor_command.EXPAND):
                     self._expand_faces.add(face_anchor)
                 elif (code == mesh_neighborhood_processor_command.IGNORE):
                     self._ignore_faces.add(face_anchor)
+                tpdl.append(result)
             if (len(self._expand_faces) < 1):
                 self._done = True
                 break
+        return tpdl
 
     def invoke_timeslice(self, timeout, steps=1):
+        tpdl = []
         start = time.perf_counter()
         while (not self.done()):
-            self.invoke(steps)
+            result = self.invoke(steps)
+            tpdl.extend(result)
             if ((time.perf_counter() - start) >= timeout):
                 break
+        return tpdl
 
     def status(self):
         return self._mnb.level()
@@ -396,20 +403,26 @@ class mesh_list_processor:
         self._done = False
 
     def invoke(self, max_iterations):
+        tpdl = []
         for _ in range(0, max_iterations):
             if (self._face_index < self._face_count):
-                self._callback(self._face_list[self._face_index], -1)
+                result = self._callback(self._face_list[self._face_index], -1)
                 self._face_index += 1
+                tpdl.append(result)
             if (self._face_index >= self._face_count):
                 self._done = True
                 break
+        return tpdl
         
     def invoke_timeslice(self, timeout, steps=1):
+        tpdl = []
         start = time.perf_counter()
         while (not self.done()):
-            self.invoke(steps)
+            result = self.invoke(steps)
+            tpdl.extend(result)
             if ((time.perf_counter() - start) >= timeout):
                 break
+        return tpdl
 
     def status(self):
         return (self._face_index, self._face_count) # tuple return
@@ -433,36 +446,35 @@ class mesh_neighborhood_operation_color:
     def paint(self, face_index, level):
         vertex_indices = self._mesh_faces[face_index]
         self._level = level
-        self._pixels_painted = 0
+        self._result = (mesh_neighborhood_processor_command.IGNORE, None)
         texture_processor(self._mesh_uvx[vertex_indices, :], self._paint_uv, self._tolerance)
-        return mesh_neighborhood_processor_command.EXPAND if (self._pixels_painted > 0) else mesh_neighborhood_processor_command.IGNORE
+        return self._result
     
     def _paint_uv(self, pixels, weights):
-        self._pixels_painted = self._target(pixels, self._level)
+        self._result = self._target(pixels, self._level)
 
 
 # TODO: THIS DISTANCE IS NOT GEODESIC
 class mesh_neighborhood_operation_brush:
-    def __init__(self, mesh_vertices, mesh_faces, mesh_uvx, origin, targets, tolerance=0):
+    def __init__(self, mesh_vertices, mesh_faces, mesh_uvx, origin, target, tolerance=0):
         self._mesh_vertices = mesh_vertices
         self._mesh_faces = mesh_faces
         self._mesh_uvx = mesh_uvx
         self._origin = origin
-        self._targets = targets
+        self._target = target
         self._tolerance = tolerance
 
     def paint(self, face_index, level):
         vertex_indices = self._mesh_faces[face_index]
         self._simplex_3d = self._mesh_vertices[vertex_indices, :]
         self._level = level
-        self._pixels_painted = 0
+        self._result = (mesh_neighborhood_processor_command.IGNORE, None)
         texture_processor(self._mesh_uvx[vertex_indices, :], self._paint_uv, self._tolerance)
-        return mesh_neighborhood_processor_command.EXPAND if (self._pixels_painted > 0) else mesh_neighborhood_processor_command.IGNORE
+        return self._result
     
     def _paint_uv(self, pixels, weights):
         distances = np.linalg.norm((weights @ self._simplex_3d) - self._origin, axis=1)
-        for target in self._targets:
-            self._pixels_painted += target(pixels, distances, self._level)
+        self._result = self._target(pixels, distances, self._level)
 
 
 class mesh_neighborhood_operation_decal:
@@ -476,20 +488,24 @@ class mesh_neighborhood_operation_decal:
         self._target = target
         self._tolerance = tolerance
 
+    def _bootstrap(self):
+        value = self._target(self._mesh_vertices, self._face_normal, self._origin, self._vertex_indices_b, self._vertex_indices_a, None, None, self._level)
+        self._result = (value, None, None)
+        return value == mesh_neighborhood_processor_command.EXPAND
+
     def paint(self, face_index, level):
         self._face_normal = self._mesh_face_normals[face_index:(face_index + 1), :]        
         self._vertex_indices_b = self._mesh_faces[face_index]
         self._vertex_indices_a = self._uv_transform[self._vertex_indices_b]
         self._level = level
-        command = self._target(self._mesh_vertices, self._face_normal, self._origin, self._vertex_indices_b, self._vertex_indices_a, None, None, self._level)
-        if (command != mesh_neighborhood_processor_command.EXPAND):
-            return command
-        self._pixels_painted = 0
+        if (not self._bootstrap()):
+            return self._result
+        self._result = (mesh_neighborhood_processor_command.IGNORE, None, None)
         texture_processor(self._mesh_uvx[self._vertex_indices_b, :], self._paint_uv, self._tolerance)
-        return mesh_neighborhood_processor_command.EXPAND if (self._pixels_painted > 0) else mesh_neighborhood_processor_command.IGNORE
+        return self._result
 
     def _paint_uv(self, pixels, weights):
-        self._pixels_painted = self._target(self._mesh_vertices, self._face_normal, self._origin, self._vertex_indices_b, self._vertex_indices_a, pixels, weights, self._level)
+        self._result = self._target(self._mesh_vertices, self._face_normal, self._origin, self._vertex_indices_b, self._vertex_indices_a, pixels, weights, self._level)        
 
 
 class paint_color_solid:
@@ -503,7 +519,9 @@ class paint_color_solid:
         pixels_painted = selection.shape[0]
         if (pixels_painted > 0):
             self._render_buffer[selection[:, 1], selection[:, 0], :] = self._color
-        return 1 if (level < self._stop_level) else 0
+        cc = level < self._stop_level
+        command = mesh_neighborhood_processor_command.EXPAND if (cc) else mesh_neighborhood_processor_command.IGNORE
+        return (command, selection) # tuple return
 
 
 class paint_brush_solid:
@@ -515,11 +533,13 @@ class paint_brush_solid:
 
     def paint(self, pixels, distances, level):
         mask = distances < self._size
-        pixels_painted = np.count_nonzero(mask)
+        selection = pixels[mask, :]
+        pixels_painted = selection.shape[0]
         if (pixels_painted > 0):
-            selection = pixels[mask, :]
             self._render_buffer[selection[:, 1], selection[:, 0], :] = self._color
-        return 1 if (pixels_painted > int(self._fill_test * pixels.shape[0])) else 0
+        cc = pixels_painted > int(self._fill_test * pixels.shape[0])
+        command = mesh_neighborhood_processor_command.EXPAND if (cc) else mesh_neighborhood_processor_command.IGNORE
+        return (command, selection) # tuple return
 
 
 class paint_brush_gradient:
@@ -534,11 +554,13 @@ class paint_brush_gradient:
 
     def paint(self, pixels, distances, level):
         mask = distances < self._size
-        pixels_painted = np.count_nonzero(mask)
-        if (pixels_painted > 0):
-            selection = pixels[mask, :]
+        selection = pixels[mask, :]
+        pixels_painted = selection.shape[0]
+        if (pixels_painted > 0):            
             self._render_buffer[selection[:, 1], selection[:, 0], :] = texture_alpha_blend(self._color_center, self._color_edge, texture_alpha_remap(distances[mask, np.newaxis] / self._size, self._src, self._dst))
-        return 1 if (pixels_painted > int(self._fill_test * pixels.shape[0])) else 0
+        cc = pixels_painted > int(self._fill_test * pixels.shape[0])
+        command = mesh_neighborhood_processor_command.EXPAND if (cc) else mesh_neighborhood_processor_command.IGNORE
+        return (command, selection) # tuple return
 
 
 # TODO: THIS UNWRAPPING METHOD IS AFFECTED BY THE ORDER IN WHICH FACES ARE PROCESSED
@@ -570,6 +592,14 @@ class paint_decal_solid:
         abc = np.hstack((ab, 1 - ab[:, 0:1] - ab[:, 1:2]))
         return np.all(abc > -self._tolerance)
 
+    def _test_double_cover(self, vxd):
+        if (self._double_cover_test):
+            for i in range(0, len(self._simplices)):
+                double_cover = self._test_simplex(vxd[:, 0:2], len(self._simplices) - 1 - i)
+                if (double_cover):
+                    return True
+        return False
+
     def _bootstrap(self, mesh_vertices, face_normal, origin, indices_vertices, indices_uvx, pixels_dst, weights_src, level):
         self._align_axis = np.array([[0, 1, 0]], face_normal.dtype)
         self._uvx_normal = np.array([[0, 0, 1]], face_normal.dtype)
@@ -587,8 +617,8 @@ class paint_decal_solid:
         vxd = (((vxs - vps) @ align_outward) @ align_simplex) + vpd
         vxd[:, 2] = 0
 
-        self._image_uvx[indices_uvx, :] = vxd
         self._push_simplex(vxd[:, 0:2])
+        self._image_uvx[indices_uvx, :] = vxd
 
         return mesh_neighborhood_processor_command.EXPAND
 
@@ -619,14 +649,14 @@ class paint_decal_solid:
         vxd = ((vxs - vps) @ align_outward) + vpd
         vxd[:, 2] = 0
 
-        if (self._double_cover_test):
-            for i in range(0, len(self._simplices)):
-                double_cover = self._test_simplex(vxd[:, 0:2], len(self._simplices) - 1 - i)
-                if (double_cover):
-                    return mesh_neighborhood_processor_command.IGNORE
+        double_cover = self._test_double_cover(vxd)
+
+        self._push_simplex(np.vstack((vxd[:, 0:2], vqd[:, 0:2], vpd[:, 0:2])))
+
+        if (double_cover):
+            return mesh_neighborhood_processor_command.IGNORE
 
         self._image_uvx[vixs_a:(vixs_a + 1), :] = vxd
-        self._push_simplex(np.vstack((vxd[:, 0:2], vqd[:, 0:2], vpd[:, 0:2])))
 
         return mesh_neighborhood_processor_command.EXPAND
 
@@ -634,11 +664,13 @@ class paint_decal_solid:
         pixels_src = texture_uvx_invert(weights_src @ self._image_uvx[indices_uvx, 0:2], self._image_buffer.shape, 1)
         mask = texture_test_inside(self._image_buffer, pixels_src[:, 0], pixels_src[:, 1])
         pixels_painted = np.count_nonzero(mask)
+        dst = pixels_dst[mask, :]
+        src = pixels_src[mask, :]
         if (pixels_painted > 0):
-            dst = pixels_dst[mask, :]
-            src = pixels_src[mask, :]
             self._render_buffer[dst[:, 1], dst[:, 0], :] = texture_read(self._image_buffer, src[:, 0], src[:, 1])
-        return 1 if (pixels_painted > int(self._fill_test * pixels_dst.shape[0])) else 0
+        cc = pixels_painted > int(self._fill_test * pixels_dst.shape[0])
+        command = mesh_neighborhood_processor_command.EXPAND if (cc) else mesh_neighborhood_processor_command.IGNORE
+        return (command, dst, src) # tuple return
 
     def paint(self, mesh_vertices, face_normal, origin, indices_vertices, indices_uvx, pixels_dst, weights_src, level):
         call = self._blit if ((pixels_dst is not None) and (weights_src is not None)) else self._unwrap if (level > 0) else self._bootstrap
@@ -1376,8 +1408,8 @@ class renderer_mesh_paint:
         o = self._colors[color_idx].paint
         self._tasks[task_id] = painter_create_color(mesh_a, mesh_b, self._uvx, self._uv_transform, face_index, origin, o, tolerance, fixed)
 
-    def task_create_paint_brush(self, task_id, mesh_a, mesh_b, face_index, origin, brush_ids, tolerance=0):
-        o = [self._brushes[brush_id].paint for brush_id in brush_ids]
+    def task_create_paint_brush(self, task_id, mesh_a, mesh_b, face_index, origin, brush_idx, tolerance=0):
+        o = self._brushes[brush_idx].paint
         self._tasks[task_id] = painter_create_brush(mesh_a, mesh_b, self._uvx, self._uv_transform, face_index, origin, o, tolerance)
         
     def task_create_paint_decal(self, task_id, mesh_a, mesh_b, face_index, origin, decal_idx, tolerance=0):
@@ -1385,7 +1417,10 @@ class renderer_mesh_paint:
         self._tasks[task_id] = painter_create_decal(mesh_a, mesh_b, self._uvx, self._uv_transform, face_index, origin, o, tolerance)
 
     def task_execute(self, task_id, timeout, steps=1):
-        self._tasks[task_id].invoke_timeslice(timeout, steps)
+        return self._tasks[task_id].invoke_timeslice(timeout, steps)
+    
+    def task_status(self, task_id):
+        return self._tasks[task_id].status()
 
     def task_done(self, task_id):
         return self._tasks[task_id].done()
@@ -1581,7 +1616,7 @@ class renderer:
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
         effect.brush_create_solid(0, size, color, 0, fill_test)
-        effect.task_create_paint_brush(0, mesh_a, mesh_b, anchor.face_index, anchor.point, [0], tolerance)
+        effect.task_create_paint_brush(0, mesh_a, mesh_b, anchor.face_index, anchor.point, 0, tolerance)
         effect.task_execute(0, timeout, steps)
         return effect.task_done(0)
     
@@ -1589,7 +1624,7 @@ class renderer:
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
         effect.brush_create_gradient(1, size, color_center, color_edge, hardness, 0, fill_test)
-        effect.task_create_paint_brush(1, mesh_a, mesh_b, anchor.face_index, anchor.point, [1], tolerance)
+        effect.task_create_paint_brush(1, mesh_a, mesh_b, anchor.face_index, anchor.point, 1, tolerance)
         effect.task_execute(1, timeout, steps)
         return effect.task_done(1)
     
