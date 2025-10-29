@@ -1378,6 +1378,9 @@ class renderer_mesh_paint:
     def layer_clear(self, layer_id):
         self._layers[layer_id][:, :, :] = 0
 
+    def layer_erase(self, layer_id, pixels):
+        self._layers[layer_id][pixels[:, 1], pixels[:, 0], :] = 0
+
     def layer_delete(self, layer_id):
         self._layers.pop(layer_id)
         self._layer_enable.pop(layer_id)
@@ -1623,6 +1626,11 @@ class renderer:
     def smpl_paint_layer_clear(self, mesh_id, layer_id):
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
         effect.layer_clear(layer_id)
+
+    def smpl_paint_layer_erase(self, mesh_id, layer_id, data):
+        visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
+        pixels = np.vstack([p[1] for p in data if p[1] is not None])
+        effect.layer_erase(layer_id, pixels)
 
     def smpl_paint_layer_delete(self, mesh_id, layer_id):
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
