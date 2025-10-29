@@ -728,7 +728,7 @@ class mesh_chart_frame:
         self.length = length
         self.points = points
 
-    def decompose(self, point):
+    def _decompose(self, point):
         offset = point - self.center
         ny = offset @ self.up.T
         xz = offset - ny * self.up
@@ -752,13 +752,13 @@ class mesh_chart_frame:
         return mesh_chart_point(point, face_index, position, direction, orientation)
     
     def to_cylindrical(self, point):
-        offset, nx, ny, nz, xz, nxz = self.decompose(point)
+        offset, nx, ny, nz, xz, nxz = self._decompose(point)
         displacement = ny
         yaw = np.arctan2(nx, nz)
         return mesh_chart_local(displacement, yaw, offset, nx, ny, nz, xz, nxz)
 
     def to_spherical(self, point):
-        offset, nx, ny, nz, xz, nxz = self.decompose(point)
+        offset, nx, ny, nz, xz, nxz = self._decompose(point)
         yaw = np.arctan2(nx, nz)
         pitch = np.arctan2(ny, nxz)
         return mesh_chart_local(yaw, pitch, offset, nx, ny, nz, xz, nxz)
@@ -783,9 +783,6 @@ class mesh_chart:
             frame = operator.methodcaller('_create_frame_' + region)(self)
             self._cache[region] = frame
         return frame
-    
-    def decompose(self, frame, point):
-        return frame.decompose(point)
     
     def from_cylindrical(self, frame, displacement, yaw):
         return frame.from_cylindrical(self._mesh, displacement, yaw)
@@ -1347,6 +1344,13 @@ class renderer_scene_control:
                 self._scene.remove_node(item)
 
 
+class renderer_mesh_paint_descriptor:
+    def __init__(self, resource_id, layer_id, task_id):
+        self.resource_id = resource_id
+        self.layer_id = layer_id
+        self.task_id = task_id
+
+
 class renderer_mesh_paint:
     def __init__(self, uvx, render_target, uv_transform, background):
         self._uvx = uvx
@@ -1366,6 +1370,7 @@ class renderer_mesh_paint:
 
     def layer_create(self, layer_id):
         self._layers[layer_id] = np.zeros_like(self._render_target)
+        self._layer_enable[layer_id] = False
 
     def layer_enable(self, layer_id, enable):
         self._layer_enable[layer_id] = enable
@@ -1375,6 +1380,7 @@ class renderer_mesh_paint:
 
     def layer_delete(self, layer_id):
         self._layers.pop(layer_id)
+        self._layer_enable.pop(layer_id)
 
     def texture_attach(self, texture_id, texture):
         self._textures[texture_id] = texture
@@ -1424,11 +1430,13 @@ class renderer_mesh_paint:
     def task_done(self, task_id):
         return self._tasks[task_id].done()
     
-    def task_get(self, task_id):
-        return self._tasks[task_id]
-    
     def task_delete(self, task_id):
         self._tasks.pop(task_id)
+
+    def clear(self, enabled_only=False):
+        for key in self._layers.keys():
+            if ((not enabled_only) or self._layer_enable[key]):
+                self.layer_clear(key)
 
     def flush(self, force_alpha=None):
         self._render_target[:, :, :] = self._background
@@ -1600,53 +1608,88 @@ class renderer:
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         return chart.to_pose(frame)
     
-    def smpl_paint_color_solid(self, mesh_id, anchor, color, stop_level, timeout=0.05, steps=1, tolerance=0, fixed=False, manual=False, color_id=0, task_id=3):
+    def smpl_paint_set_background(self, mesh_id, background):
+        visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
+        effect.set_background(background)
+    
+    def smpl_paint_layer_create(self, mesh_id, layer_id):
+        visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
+        effect.layer_create(layer_id)
+    
+    def smpl_paint_layer_enable(self, mesh_id, layer_id, enable):
+        visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
+        effect.layer_enable(layer_id, enable)
+
+    def smpl_paint_layer_clear(self, mesh_id, layer_id):
+        visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
+        effect.layer_clear(layer_id)
+
+    def smpl_paint_layer_delete(self, mesh_id, layer_id):
+        visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
+        effect.layer_delete(layer_id)
+
+    def smpl_paint_color_solid(self, mesh_id, anchor, color, stop_level, tolerance=0, fixed=False, descriptor=None, timeout=0.05, steps=1):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
         face_index, point = (anchor.face_index, anchor.point) if (not fixed) else (anchor, None)
-        effect.color_create_solid(color_id, color, stop_level, 0)
-        effect.task_create_paint_color(task_id, mesh_a, mesh_b, face_index, point, color_id, tolerance, fixed)
-        if (manual):
-            return effect.task_get(task_id)
-        effect.task_execute(task_id, timeout, steps)
-        return effect.task_done(task_id)
-
-    def smpl_paint_brush_solid(self, mesh_id, anchor, size, color, fill_test=0.0, timeout=0.05, steps=1, tolerance=0) -> bool:
-        mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
-        visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
-        effect.brush_create_solid(0, size, color, 0, fill_test)
-        effect.task_create_paint_brush(0, mesh_a, mesh_b, anchor.face_index, anchor.point, 0, tolerance)
-        effect.task_execute(0, timeout, steps)
-        return effect.task_done(0)
+        d = renderer_mesh_paint_descriptor(0, 0, 0) if (descriptor is None) else descriptor
+        effect.color_create_solid(d.resource_id, color, stop_level, d.layer_id)
+        effect.task_create_paint_color(d.task_id, mesh_a, mesh_b, face_index, point, d.resource_id, tolerance, fixed)
+        data = effect.task_execute(d.task_id, timeout, steps)
+        done = effect.task_done(d.task_id)
+        effect.task_delete(d.task_id)
+        effect.color_delete(d.resource_id)
+        return (done, data) # tuple return
     
-    def smpl_paint_brush_gradient(self, mesh_id, anchor, size, color_center, color_edge, hardness, fill_test=0.0, timeout=0.05, steps=1, tolerance=0) -> bool:
+    def smpl_paint_brush_solid(self, mesh_id, anchor, size, color, fill_test=0.0, tolerance=0, descriptor=None, timeout=0.05, steps=1):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
-        effect.brush_create_gradient(1, size, color_center, color_edge, hardness, 0, fill_test)
-        effect.task_create_paint_brush(1, mesh_a, mesh_b, anchor.face_index, anchor.point, 1, tolerance)
-        effect.task_execute(1, timeout, steps)
-        return effect.task_done(1)
+        d = renderer_mesh_paint_descriptor(0, 0, 1) if (descriptor is None) else descriptor
+        effect.brush_create_solid(d.resource_id, size, color, d.layer_id, fill_test)
+        effect.task_create_paint_brush(d.task_id, mesh_a, mesh_b, anchor.face_index, anchor.point, d.resource_id, tolerance)
+        data = effect.task_execute(d.task_id, timeout, steps)
+        done = effect.task_done(d.task_id)
+        effect.task_delete(d.task_id)
+        effect.brush_delete(d.resource_id)
+        return (done, data) # tuple return
     
-    def smpl_paint_decal_solid(self, mesh_id, anchor, decal, align_prior, angle, scale, double_cover_test=True, fill_test=0.0, timeout=0.05, steps=1, tolerance_decal=0, tolerance_paint=0) -> bool:
+    def smpl_paint_brush_gradient(self, mesh_id, anchor, size, color_center, color_edge, hardness, fill_test=0.0, tolerance=0, descriptor=None, timeout=0.05, steps=1):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
-        effect.texture_attach(0, decal)
-        effect.decal_create_solid(0, align_prior, angle, scale, 0, 0, double_cover_test, fill_test, tolerance_decal)
-        effect.task_create_paint_decal(2, mesh_a, mesh_b, anchor.face_index, anchor.point, 0, tolerance_paint)
-        effect.task_execute(2, timeout, steps)
-        return effect.task_done(2)
+        d = renderer_mesh_paint_descriptor(1, 0, 2) if (descriptor is None) else descriptor
+        effect.brush_create_gradient(d.resource_id, size, color_center, color_edge, hardness, d.layer_id, fill_test)
+        effect.task_create_paint_brush(d.task_id, mesh_a, mesh_b, anchor.face_index, anchor.point, d.resource_id, tolerance)
+        data = effect.task_execute(d.task_id, timeout, steps)
+        done = effect.task_done(d.task_id)
+        effect.task_delete(d.task_id)
+        effect.brush_delete(d.resource_id)
+        return (done, data) # tuple return
+    
+    def smpl_paint_decal_solid(self, mesh_id, anchor, decal, align_prior, angle, scale, double_cover_test=True, fill_test=0.0, tolerance_decal=0, tolerance_paint=0, descriptor=None, timeout=0.05, steps=1):
+        mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
+        visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
+        d = renderer_mesh_paint_descriptor(0, 0, 3) if (descriptor is None) else descriptor
+        effect.texture_attach(d.resource_id, decal)
+        effect.decal_create_solid(d.resource_id, align_prior, angle, scale, d.resource_id, d.layer_id, double_cover_test, fill_test, tolerance_decal)
+        effect.task_create_paint_decal(d.task_id, mesh_a, mesh_b, anchor.face_index, anchor.point, d.resource_id, tolerance_paint)
+        data = effect.task_execute(d.task_id, timeout, steps)
+        done = effect.task_done(d.task_id)
+        effect.task_delete(d.task_id)
+        effect.decal_delete(d.resource_id)
+        effect.texture_detach(d.resource_id)
+        return (done, data) # tuple return
     
     def smpl_paint_decal_align_prior(self, mesh_id, anchor, align_axis, align_axis_fallback, tolerance=0):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
-        align_normal = mesh_a.face_normals[anchor.face_index:(anchor.face_index+1), :]
+        align_normal = mesh_a.face_normals[anchor.face_index:(anchor.face_index + 1), :]
         align_prior, nap = math_normalize(align_axis - (align_normal @ align_axis.T) * align_normal)
         return align_prior if (nap > tolerance) else math_normalize(align_axis_fallback - (align_normal @ align_axis_fallback.T) * align_normal)[0]
     
-    def smpl_paint_clear(self, mesh_id) -> None:
+    def smpl_paint_clear(self, mesh_id, enabled_only=False):
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
-        effect.layer_clear(0)
-
-    def smpl_paint_flush(self, mesh_id) -> None:
+        effect.clear(enabled_only)
+    
+    def smpl_paint_flush(self, mesh_id, force_alpha=None):
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
-        effect.flush()
+        effect.flush(force_alpha)
 
