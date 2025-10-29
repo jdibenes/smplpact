@@ -126,8 +126,8 @@ class demo:
     def _loop(self, camerahmr_message):
         # SMPL params to mesh
         person_list = camerahmr_message['persons']
-        smpl_params, camera_translation = self.smpl_unpack(person_list)
-        smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, camera_translation)
+        smpl_params = self.smpl_unpack(person_list)
+        smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params)
         smpl_vertices = smpl_result.vertices[0]
         smpl_joints = smpl_result.joints[0]
         smpl_faces = smpl_result.faces
@@ -270,9 +270,9 @@ class demo:
         global_orient = torch.tensor([person['smpl_params']['global_orient'] for person in person_list], dtype=torch.float32, device=self._device)
         body_pose = torch.tensor([person['smpl_params']['body_pose'] for person in person_list], dtype=torch.float32, device=self._device)
         betas = torch.tensor([person['smpl_params']['betas'] for person in person_list], dtype=torch.float32, device=self._device)
-        smpl_params = { 'global_orient' : global_orient, 'body_pose' : body_pose, 'betas' : betas }
         camera_translation = torch.tensor([person['camera_translation'] for person in person_list], dtype=torch.float32, device=self._device)
-        return smpl_params, camera_translation
+        smpl_params = { 'global_orient' : global_orient, 'body_pose' : body_pose, 'betas' : betas, 'transl' : camera_translation }        
+        return smpl_params
 
 
 def main():
