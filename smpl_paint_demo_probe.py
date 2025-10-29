@@ -112,13 +112,12 @@ class demo:
         smpl_faces = smpl_result.faces
 
         cliff_image_size = camerahmr_message['image_size']
-        cliff_scale = 1#camerahmr_message['persons'][0]['scale']
-        cliff_focal_length = cliff_scale * camerahmr_message['persons'][0]['focal_length']        
+        cliff_focal_length = camerahmr_message['persons'][0]['focal_length']
         self._K_smpl = np.array([[cliff_focal_length, 0, cliff_image_size[0]//2],[0, cliff_focal_length, cliff_image_size[1]//2],[0, 0, 1]], dtype=np.float32) 
 
         #smpl_R, smpl_t = smplpact.smpl_camera_align_It(self._K_smpl.T, self._K.T, smpl_joints)
-        #smpl_R, smpl_t = smplpact.smpl_camera_align_Rt(self._K_smpl.T, self._K.T, smpl_joints)
-        smpl_R, smpl_t = smplpact.smpl_camera_align_dz(self._K_smpl.T, self._K.T, smpl_joints)
+        smpl_R, smpl_t = smplpact.smpl_camera_align_Rt(self._K_smpl.T, self._K.T, smpl_joints)
+        #smpl_R, smpl_t = smplpact.smpl_camera_align_dz(self._K_smpl.T, self._K.T, smpl_joints)
 
         smpl_vertices = smpl_vertices @ smpl_R + smpl_t
         smpl_joints = smpl_joints @ smpl_R + smpl_t
@@ -128,7 +127,6 @@ class demo:
         # Compute pose to set mesh upright
         # Poses convert from object to world
         smpl_mesh_pose = np.linalg.inv(smplpact.smpl_mesh_chart_openpose(smpl_mesh, smpl_joints).create_frame('body_center').to_pose()).T
-        #smpl_mesh_pose = np.eye(4, dtype=np.float32)
 
         # Add SMPL mesh to the main scene
         smpl_mesh_id = self._offscreen_renderer.mesh_add_smpl('smpl', 'patient', smpl_mesh, smpl_joints, self._texture_array, smpl_mesh_pose)
@@ -165,34 +163,6 @@ class demo:
 
         # Render
         color, depth = self._offscreen_renderer.scene_render()
-
-        joints_image = (smpl_joints) @ self._K.T
-        joints_image = joints_image / joints_image[:, 2:3]
-
-        #smpl_joints_1 = smpl_result.joints[1]
-
-        #joints_image = (smpl_joints_1) @ self._K_smpl.T
-        #joints_image = joints_image / joints_image[:, 2:3]
-
-        joints_image_ref = (smpl_joints - smpl_t) @ np.linalg.inv(smpl_R) @ self._K_smpl.T
-        joints_image_ref = joints_image_ref / joints_image_ref[:, 2:3]
-
-
-
-
-        print('RES')
-        print(np.mean(np.linalg.norm(joints_image - joints_image_ref, axis=1), axis=0))
-
-        #print(depth)
-
-        for i in range(0, joints_image.shape[0]):
-            center = (int(joints_image[i, 0]), int(joints_image[i, 1]))
-            cv2.circle(self._test_image, center, 5, (255, 0, 255), -1)
-
-        for i in range(0, joints_image_ref.shape[0]):
-            center = (int(joints_image_ref[i, 0]), int(joints_image_ref[i, 1]))
-            cv2.circle(self._test_image, center, 5, (0, 255, 0))
-        cv2.imshow('Test image', self._test_image)
 
         # Show rendered image
         cv2.imshow('SMPL Paint Demo', cv2.cvtColor(color, cv2.COLOR_RGB2BGR))
