@@ -1636,11 +1636,11 @@ class renderer:
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
         effect.layer_delete(layer_id)
 
-    def smpl_paint_color_solid(self, mesh_id, anchor, color, stop_level, tolerance=0, fixed=False, descriptor=None, timeout=0.05, steps=1):
+    def smpl_paint_color_solid(self, mesh_id, anchor, color, stop_level, tolerance=0, fixed=False, layer_id=0, timeout=0.05, steps=1):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
         face_index, point = (anchor.face_index, anchor.point) if (not fixed) else (anchor, None)
-        d = renderer_mesh_paint_descriptor(0, 0, 0) if (descriptor is None) else descriptor
+        d = renderer_mesh_paint_descriptor(0, layer_id, 0)
         effect.color_create_solid(d.resource_id, color, stop_level, d.layer_id)
         effect.task_create_paint_color(d.task_id, mesh_a, mesh_b, face_index, point, d.resource_id, tolerance, fixed)
         data = effect.task_execute(d.task_id, timeout, steps)
@@ -1649,10 +1649,10 @@ class renderer:
         effect.color_delete(d.resource_id)
         return (done, data) # tuple return
     
-    def smpl_paint_brush_solid(self, mesh_id, anchor, size, color, fill_test=0.0, tolerance=0, descriptor=None, timeout=0.05, steps=1):
+    def smpl_paint_brush_solid(self, mesh_id, anchor, size, color, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
-        d = renderer_mesh_paint_descriptor(0, 0, 1) if (descriptor is None) else descriptor
+        d = renderer_mesh_paint_descriptor(0, layer_id, 1)
         effect.brush_create_solid(d.resource_id, size, color, d.layer_id, fill_test)
         effect.task_create_paint_brush(d.task_id, mesh_a, mesh_b, anchor.face_index, anchor.point, d.resource_id, tolerance)
         data = effect.task_execute(d.task_id, timeout, steps)
@@ -1661,10 +1661,10 @@ class renderer:
         effect.brush_delete(d.resource_id)
         return (done, data) # tuple return
     
-    def smpl_paint_brush_gradient(self, mesh_id, anchor, size, color_center, color_edge, hardness, fill_test=0.0, tolerance=0, descriptor=None, timeout=0.05, steps=1):
+    def smpl_paint_brush_gradient(self, mesh_id, anchor, size, color_center, color_edge, hardness, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
-        d = renderer_mesh_paint_descriptor(1, 0, 2) if (descriptor is None) else descriptor
+        d = renderer_mesh_paint_descriptor(1, layer_id, 2)
         effect.brush_create_gradient(d.resource_id, size, color_center, color_edge, hardness, d.layer_id, fill_test)
         effect.task_create_paint_brush(d.task_id, mesh_a, mesh_b, anchor.face_index, anchor.point, d.resource_id, tolerance)
         data = effect.task_execute(d.task_id, timeout, steps)
@@ -1673,10 +1673,10 @@ class renderer:
         effect.brush_delete(d.resource_id)
         return (done, data) # tuple return
     
-    def smpl_paint_decal_solid(self, mesh_id, anchor, decal, align_prior, angle, scale, double_cover_test=True, fill_test=0.0, tolerance_decal=0, tolerance_paint=0, descriptor=None, timeout=0.05, steps=1):
+    def smpl_paint_decal_solid(self, mesh_id, anchor, decal, align_prior, angle, scale, double_cover_test=True, fill_test=0.0, tolerance_decal=0, tolerance_paint=0, layer_id=0, timeout=0.05, steps=1):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
-        d = renderer_mesh_paint_descriptor(0, 0, 3) if (descriptor is None) else descriptor
+        d = renderer_mesh_paint_descriptor(0, layer_id, 3)
         effect.texture_attach(d.resource_id, decal)
         effect.decal_create_solid(d.resource_id, align_prior, angle, scale, d.resource_id, d.layer_id, double_cover_test, fill_test, tolerance_decal)
         effect.task_create_paint_decal(d.task_id, mesh_a, mesh_b, anchor.face_index, anchor.point, d.resource_id, tolerance_paint)
