@@ -1406,11 +1406,11 @@ class renderer_mesh_paint:
     def layer_enable(self, layer_id, enable):
         self._layer_enable[layer_id] = enable
 
-    def layer_clear(self, layer_id):
-        self._layers[layer_id][:, :, :] = 0
+    def layer_clear(self, layer_id, color=0):
+        self._layers[layer_id][:, :, :] = color
 
-    def layer_erase(self, layer_id, pixels):
-        self._layers[layer_id][pixels[:, 1], pixels[:, 0], :] = 0
+    def layer_erase(self, layer_id, pixels, color=0):
+        self._layers[layer_id][pixels[:, 1], pixels[:, 0], :] = color
 
     def layer_delete(self, layer_id):
         self._layers.pop(layer_id)
@@ -1467,18 +1467,20 @@ class renderer_mesh_paint:
     def task_delete(self, task_id):
         self._tasks.pop(task_id)
 
-    def clear(self, enabled_only=False):
+    def clear(self, enabled_only=False, color=0):
         for key in self._layers.keys():
             if ((not enabled_only) or self._layer_enable[key]):
-                self.layer_clear(key)
+                self.layer_clear(key, color)
 
-    def flush(self, force_alpha=None):
+    def flush(self, force_alpha=None, stencil_layer=None):
         self._render_target[:, :, :] = self._background
         for key in sorted(self._layers.keys()):
             if (self._layer_enable[key]):
                 self._render_target[:, :, :] = np.array(Image.alpha_composite(Image.fromarray(self._render_target), Image.fromarray(self._layers[key])))
         if (force_alpha is not None):
             self._render_target[:, :, 3] = force_alpha
+        if (stencil_layer is not None):
+            self._render_target[:, :, 3] = self._layers[stencil_layer][:, :, 3]
 
 
 class renderer_mesh_paint_single_pass(renderer_mesh_paint):
@@ -1650,14 +1652,14 @@ class renderer_mesh_control:
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
         effect.layer_enable(layer_id, enable)
 
-    def smpl_paint_layer_clear(self, mesh_id, layer_id):
+    def smpl_paint_layer_clear(self, mesh_id, layer_id, color=0):
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
-        effect.layer_clear(layer_id)
+        effect.layer_clear(layer_id, color)
 
-    def smpl_paint_layer_erase(self, mesh_id, layer_id, data):
+    def smpl_paint_layer_erase(self, mesh_id, layer_id, data, color=0):
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
         pixels = np.vstack([p[1] for p in data if p[1] is not None])
-        effect.layer_erase(layer_id, pixels)
+        effect.layer_erase(layer_id, pixels, color)
 
     def smpl_paint_layer_delete(self, mesh_id, layer_id):
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
@@ -1688,13 +1690,13 @@ class renderer_mesh_control:
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         return mesh_align_prior(mesh_a, anchor.face_index, align_axis, align_axis_fallback, tolerance)
     
-    def smpl_paint_clear(self, mesh_id, enabled_only=False):
+    def smpl_paint_clear(self, mesh_id, enabled_only=False, color=0):
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
-        effect.clear(enabled_only)
+        effect.clear(enabled_only, color)
     
-    def smpl_paint_flush(self, mesh_id, force_alpha=None):
+    def smpl_paint_flush(self, mesh_id, force_alpha=None, stencil_layer=None):
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
-        effect.flush(force_alpha)
+        effect.flush(force_alpha, stencil_layer)
 
 
 #------------------------------------------------------------------------------
@@ -1808,11 +1810,11 @@ class renderer:
     def smpl_paint_layer_enable(self, mesh_id, layer_id, enable):
         self._mesh_control.smpl_paint_layer_enable(mesh_id, layer_id, enable)
     
-    def smpl_paint_layer_clear(self, mesh_id, layer_id):
-        self._mesh_control.smpl_paint_layer_clear(mesh_id, layer_id)
+    def smpl_paint_layer_clear(self, mesh_id, layer_id, color=0):
+        self._mesh_control.smpl_paint_layer_clear(mesh_id, layer_id, color)
     
-    def smpl_paint_layer_erase(self, mesh_id, result):
-        self._mesh_control.smpl_paint_layer_erase(mesh_id, result.layer_id, result.data)
+    def smpl_paint_layer_erase(self, mesh_id, result, color=0):
+        self._mesh_control.smpl_paint_layer_erase(mesh_id, result.layer_id, result.data, color)
     
     def smpl_paint_layer_delete(self, mesh_id, layer_id):
         self._mesh_control.smpl_paint_layer_delete(mesh_id, layer_id)
@@ -1832,9 +1834,9 @@ class renderer:
     def smpl_paint_decal_align_prior(self, mesh_id, anchor, align_axis, align_axis_fallback, tolerance=0) -> renderer_mesh_paint_result:
         return self._mesh_control.smpl_paint_decal_align_prior(mesh_id, anchor, align_axis, align_axis_fallback, tolerance)
 
-    def smpl_paint_clear(self, mesh_id, enabled_only=False):
-        self._mesh_control.smpl_paint_clear(mesh_id, enabled_only)
+    def smpl_paint_clear(self, mesh_id, enabled_only=False, color=0):
+        self._mesh_control.smpl_paint_clear(mesh_id, enabled_only, color=0)
 
-    def smpl_paint_flush(self, mesh_id, force_alpha=None):
-        self._mesh_control.smpl_paint_flush(mesh_id, force_alpha)
+    def smpl_paint_flush(self, mesh_id, force_alpha=None, stencil_layer=None):
+        self._mesh_control.smpl_paint_flush(mesh_id, force_alpha, stencil_layer)
 
