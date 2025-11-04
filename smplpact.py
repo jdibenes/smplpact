@@ -21,7 +21,7 @@ from PIL import Image, ImageFont, ImageDraw
 # Math
 #------------------------------------------------------------------------------
 
-# TODO: m == 0??
+# TODO: handle m == 0
 def math_normalize(a):
     m = np.linalg.norm(a)
     return (a / m, m) # tuple return
@@ -39,21 +39,24 @@ def math_transform_bearings(bearings, pose, inverse=False):
 # Geometry Solvers
 #------------------------------------------------------------------------------
 
-# TODO: error for singular matrix
+# TODO: handle error for singular matrix
 def geometry_solve_basis(vas, vbs, vad, vbd):
     return np.linalg.inv(np.vstack((vas, vbs, np.cross(vas, vbs)))) @ np.vstack((vad, vbd, np.cross(vad, vbd)))
 
 
-# TODO: cx, cy?
-def geometry_solve_fov_z(width, height, fx, fy, cx, cy, x, y, z, center, points):
+def geometry_solve_fov_z(w, h, fx, fy, cx, cy, x, y, z, center, points):
     dp = (points - center)
-    dx = np.abs(dp @ x.T)
-    dy = np.abs(dp @ y.T)
+    dx = dp @ x.T
+    dy = dp @ y.T
     dz = dp @ z.T
-    wx = dz + ((2 * fx * dx) / width)
-    wy = dz + ((2 * fy * dy) / height)
-    wz = np.max(np.hstack((wy, wx)))
-    return wz
+    ix = fx * dx
+    iy = fy * dy
+    xp = dz + (ix / (w - cx))
+    xn = dz + (ix / (0 - cx))
+    yp = dz + (iy / (h - cy))
+    yn = dz + (iy / (0 - cy))
+    nz = np.max(np.hstack((xp, xn, yp, yn)))
+    return nz
 
 
 def geometry_fov_to_f(fov, pixels):
@@ -154,9 +157,9 @@ def texture_create_visual(uv, texture):
 
 
 def texture_uv_to_uvx(uv, image_shape):
-    uv[:, 0] = uv[:, 0] * (image_shape[1] - 1)
-    uv[:, 1] = (1 - uv[:, 1]) * (image_shape[0] - 1)
-    return uv
+    u = uv[:, 0:1] * (image_shape[1] - 1)
+    v = (1 - uv[:, 1:2]) * (image_shape[0] - 1)
+    return np.hstack((u, v))
 
 
 def texture_uvx_invert(uvx, image_shape, axis):
@@ -255,6 +258,12 @@ def mesh_raycast(mesh, origin, direction):
 def mesh_closest(mesh, origin):
     point, distance, tid = mesh.nearest.on_surface(origin)
     return (point, tid[0], distance[0]) if (len(tid) > 0) else (None, None, None) # tuple return
+
+
+def mesh_align_prior(mesh, face_index, align_axis, align_axis_fallback, tolerance=0):
+    align_normal = mesh.face_normals[face_index:(face_index + 1), :]
+    align_prior, nap = math_normalize(align_axis - (align_normal @ align_axis.T) * align_normal)
+    return align_prior if (nap > tolerance) else math_normalize(align_axis_fallback - (align_normal @ align_axis_fallback.T) * align_normal)[0]
 
 
 def mesh_snap_to_vertex(mesh, point, face_index):
@@ -1238,6 +1247,13 @@ class renderer_camera_transform:
         self.update_center(center)
 
 
+class renderer_mesh_identifier:
+    def __init__(self, group, name, kind):
+        self.group = group
+        self.name = name
+        self.kind = kind
+
+
 class renderer_scene_control:
     def __init__(self, settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp):
         self._renderer = pyrender.OffscreenRenderer(**settings_offscreen)
@@ -1314,25 +1330,26 @@ class renderer_scene_control:
         if (previous is not None):
             self._scene.remove_node(previous)
         nodes[name] = self._scene.add(item, 'external@' + group + '@' + name, pose)
+        return renderer_mesh_identifier(group, name, 'external')
 
-    def group_item_remove(self, group, name):
-        nodes = self._groups.get(group, None)
+    def group_item_remove(self, item_id):
+        nodes = self._groups.get(item_id.group, None)
         if (nodes is not None):
-            item = nodes.get(name, None)
+            item = nodes.get(item_id.name, None)
             if (item is not None):
                 self._scene.remove_node(item)
 
-    def group_item_set_pose(self, group, name, pose):
-        nodes = self._groups.get(group, None)
+    def group_item_set_pose(self, item_id, pose):
+        nodes = self._groups.get(item_id.group, None)
         if (nodes is not None):
-            item = nodes.get(name, None)
+            item = nodes.get(item_id.name, None)
             if (item is not None):
                 self._scene.set_pose(item, pose)
 
-    def group_item_get_pose(self, group, name):
-        nodes = self._groups.get(group, None)
+    def group_item_get_pose(self, item_id):
+        nodes = self._groups.get(item_id.group, None)
         if (nodes is not None):
-            item = nodes.get(name, None)
+            item = nodes.get(item_id.name, None)
             if (item is not None):
                 return self._scene.get_pose(item)
         return None
@@ -1343,12 +1360,26 @@ class renderer_scene_control:
             for name, item in nodes.items():
                 self._scene.remove_node(item)
 
+    def clear(self):
+        for nodes in self._groups.values():
+            for name, item in nodes.items():
+                self._scene.remove_node(item)
+        self._groups.clear()
+
 
 class renderer_mesh_paint_descriptor:
     def __init__(self, resource_id, layer_id, task_id):
         self.resource_id = resource_id
         self.layer_id = layer_id
         self.task_id = task_id
+
+
+class renderer_mesh_paint_result:
+    def __init__(self, done, status, data, layer_id):
+        self.done = done
+        self.status = status
+        self.data = data
+        self.layer_id = layer_id        
 
 
 class renderer_mesh_paint:
@@ -1450,64 +1481,66 @@ class renderer_mesh_paint:
             self._render_target[:, :, 3] = force_alpha
 
 
-class renderer_mesh_identifier:
-    def __init__(self, group, name, kind):
-        self.group = group
-        self.name = name
-        self.kind = kind
+class renderer_mesh_paint_single_pass(renderer_mesh_paint):
+    def __init__(self, uvx, render_target, uv_transform, background):
+        super().__init__(uvx, render_target, uv_transform, background)
+
+    def paint_color_solid(self, mesh_a, mesh_b, face_index, point, color, stop_level, tolerance=0, fixed=False, layer_id=0, timeout=0.05, steps=1):
+        d = renderer_mesh_paint_descriptor(0, layer_id, 0)
+        self.color_create_solid(d.resource_id, color, stop_level, d.layer_id)
+        self.task_create_paint_color(d.task_id, mesh_a, mesh_b, face_index, point, d.resource_id, tolerance, fixed)
+        data = self.task_execute(d.task_id, timeout, steps)
+        done = self.task_done(d.task_id)
+        status = self.task_status(d.task_id)
+        self.task_delete(d.task_id)
+        self.color_delete(d.resource_id)
+        return renderer_mesh_paint_result(done, status, data, layer_id)
+    
+    def paint_brush_solid(self, mesh_a, mesh_b, face_index, point, size, color, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1):
+        d = renderer_mesh_paint_descriptor(0, layer_id, 1)
+        self.brush_create_solid(d.resource_id, size, color, d.layer_id, fill_test)
+        self.task_create_paint_brush(d.task_id, mesh_a, mesh_b, face_index, point, d.resource_id, tolerance)
+        data = self.task_execute(d.task_id, timeout, steps)
+        done = self.task_done(d.task_id)
+        status = self.task_status(d.task_id)
+        self.task_delete(d.task_id)
+        self.brush_delete(d.resource_id)
+        return renderer_mesh_paint_result(done, status, data, layer_id)
+    
+    def paint_brush_gradient(self, mesh_a, mesh_b, face_index, point, size, color_center, color_edge, hardness, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1):
+        d = renderer_mesh_paint_descriptor(1, layer_id, 2)
+        self.brush_create_gradient(d.resource_id, size, color_center, color_edge, hardness, d.layer_id, fill_test)
+        self.task_create_paint_brush(d.task_id, mesh_a, mesh_b, face_index, point, d.resource_id, tolerance)
+        data = self.task_execute(d.task_id, timeout, steps)
+        done = self.task_done(d.task_id)
+        status = self.task_status(d.task_id)
+        self.task_delete(d.task_id)
+        self.brush_delete(d.resource_id)
+        return renderer_mesh_paint_result(done, status, data, layer_id)
+    
+    def paint_decal_solid(self, mesh_a, mesh_b, face_index, point, decal, align_prior, angle, scale, double_cover_test=True, fill_test=0.0, tolerance_decal=0, tolerance_paint=0, layer_id=0, timeout=0.05, steps=1):
+        d = renderer_mesh_paint_descriptor(0, layer_id, 3)
+        self.texture_attach(d.resource_id, decal)
+        self.decal_create_solid(d.resource_id, align_prior, angle, scale, d.resource_id, d.layer_id, double_cover_test, fill_test, tolerance_decal)
+        self.task_create_paint_decal(d.task_id, mesh_a, mesh_b, face_index, point, d.resource_id, tolerance_paint)
+        data = self.task_execute(d.task_id, timeout, steps)
+        done = self.task_done(d.task_id)
+        status = self.task_status(d.task_id)
+        self.task_delete(d.task_id)
+        self.decal_delete(d.resource_id)
+        self.texture_detach(d.resource_id)
+        return renderer_mesh_paint_result(done, status, data, layer_id)
 
 
-#------------------------------------------------------------------------------
-# Renderer
-#------------------------------------------------------------------------------
-
-class renderer:
-    def __init__(self, settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp):
-        self._scene_control = renderer_scene_control(settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp)
+class renderer_mesh_control:
+    def __init__(self, filename_uv, texture_shape):
+        self._mesh_a_vertices, self._mesh_b_vertices, self._mesh_a_faces, self._mesh_b_faces, self._mesh_a_uv, self._mesh_b_uv, self._uv_transform = texture_load_uv(filename_uv)
+        self._mesh_a_uvx = texture_uv_to_uvx(self._mesh_a_uv, texture_shape)
+        self._mesh_b_uvx = texture_uv_to_uvx(self._mesh_b_uv, texture_shape)
+        self._texture_shape = texture_shape
         self._meshes = dict()
         self._cswvfx = dict()
 
-    def smpl_load_model(self, model_path, num_betas, device):
-        self._smpl_control = smpl_model(model_path, num_betas, device)
-    
-    def smpl_load_uv(self, filename_uv, texture_shape):
-        _, _, self._mesh_a_faces, self._mesh_b_faces, _, self._mesh_b_uv, self._uv_transform = texture_load_uv(filename_uv)
-        self._mesh_b_uvx = texture_uv_to_uvx(self._mesh_b_uv.copy(), texture_shape)
-        self._texture_shape = texture_shape
-
-    def smpl_get_mesh(self, smpl_params) -> smpl_model_result:
-        return self._smpl_control.to_mesh(smpl_params)
-
-    def camera_get_pose(self):
-        return self._scene_control.camera_get_pose()
-
-    def camera_get_projection_matrix(self):
-        self._scene_control.camera_get_projection_matrix()
-
-    def camera_get_transform_local(self):
-        return self._scene_control.camera_get_transform_local()
-
-    def camera_get_transform_plane(self):
-        return self._scene_control.camera_get_transform_plane()   
-    
-    def camera_get_parameters(self):
-        return self._scene_control.camera_get_parameters()
-
-    def camera_adjust_parameters(self, yaw=None, pitch=None, distance=None, center=None, relative=True):
-        self._scene_control.camera_adjust_parameters(yaw, pitch, distance, center, relative)
-
-    def camera_move_center(self, delta_xyz, plane=True):
-        self._scene_control.camera_move_center(delta_xyz, plane)
-
-    def camera_solve_fov_z(self, center, points, plane=False):
-        return self._scene_control.camera_solve_fov_z(center, points, plane)
-    
-    def camera_project_points(self, points, convention=(1, -1, -1)):
-        return self._scene_control.camera_project_points(points, convention)
-    
-    def scene_render(self):
-        return self._scene_control.render()
-    
     def _mesh_add(self, group, name, mesh_a, mesh_b, chart, pose):
         g = self._meshes.get(group, None)
         if (g is None):
@@ -1522,87 +1555,81 @@ class renderer:
             self._cswvfx[group] = g
         u = g.get(name, None)
         if (u is None):
-            target = texture.copy()
+            target = np.zeros_like(texture)
             visual = texture_create_visual(self._mesh_b_uv, target)
-            effect = renderer_mesh_paint(self._mesh_b_uvx, target, self._uv_transform, texture)
+            effect = renderer_mesh_paint_single_pass(self._mesh_b_uvx, target, self._uv_transform, texture)
             effect.layer_create(0)
             effect.layer_enable(0, True)
             g[name] = [visual, effect]
         else:
             visual, effect = u
             effect.set_background(texture)
-        return visual
-    
-    def _mesh_present(self, group, name, mesh_x, pose):
-        mesh_p = mesh_to_renderer(mesh_x)
-        self._scene_control.group_item_add(group, name, mesh_p, pose)
 
     def mesh_add_smpl(self, group, name, mesh, joints, texture, pose):
-        visual = self._tvfx_add(group, name, texture)
-        mesh_a_tri = mesh
-        mesh_b_tri = mesh_expand(mesh_a_tri, self._uv_transform, self._mesh_b_faces, visual)
-        mesh_a_map = smpl_mesh_chart_openpose(mesh_a_tri, joints)
-        self._mesh_add(group, name, mesh_a_tri, mesh_b_tri, mesh_a_map, pose)
+        self._tvfx_add(group, name, texture)
+        visual, effect = self._cswvfx[group][name]
+        mesh_a = mesh
+        mesh_b = mesh_expand(mesh_a, self._uv_transform, self._mesh_b_faces, visual)
+        mesh_c = smpl_mesh_chart_openpose(mesh_a, joints)
+        self._mesh_add(group, name, mesh_a, mesh_b, mesh_c, pose)
         return renderer_mesh_identifier(group, name, 'smpl')
 
     def mesh_add_user(self, group, name, mesh, pose):
         self._mesh_add(group, name, mesh, None, None, pose)
         return renderer_mesh_identifier(group, name, 'user')
-
-    def mesh_set_pose(self, mesh_id, pose):
-        self._meshes[mesh_id.group][mesh_id.name][3] = pose
-        self._scene_control.group_item_set_pose(mesh_id.group, mesh_id.name, pose)
-
-    def mesh_get_pose(self, mesh_id):
-        return self._meshes[mesh_id.group][mesh_id.name][3]
-
-    def mesh_present_smpl(self, mesh_id):
-        mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
-        self._mesh_present(mesh_id.group, mesh_id.name, mesh_b, pose)
-
-    def mesh_present_user(self, mesh_id):
-        mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
-        self._mesh_present(mesh_id.group, mesh_id.name, mesh_a, pose)
-
+    
     def mesh_remove_item(self, mesh_id):
         self._meshes[mesh_id.group].pop(mesh_id.name)
-        self._scene_control.group_item_remove(mesh_id.group, mesh_id.name)
 
     def mesh_remove_group(self, group):
         self._meshes.pop(group)
-        self._scene_control.group_clear(group)
 
-    def mesh_operation_raycast(self, mesh_id, origin, direction) -> mesh_chart_point:
+    def mesh_remove_all(self):
+        self._meshes.clear()
+    
+    def mesh_get_base(self, mesh_id):
+        return self._meshes[mesh_id.group][mesh_id.name][0]
+    
+    def mesh_get_full(self, mesh_id):
+        return self._meshes[mesh_id.group][mesh_id.name][1]
+
+    def mesh_set_pose(self, mesh_id, pose):
+        self._meshes[mesh_id.group][mesh_id.name][3] = pose
+
+    def mesh_get_pose(self, mesh_id):
+        return self._meshes[mesh_id.group][mesh_id.name][3]
+    
+    def mesh_operation_raycast(self, mesh_id, origin, direction):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         local_origin = math_transform_points(origin, pose.T, True)
         local_direction = math_transform_bearings(direction, pose.T, True)
         point, face_index = mesh_raycast(mesh_a, local_origin, local_direction)
         return mesh_chart_point(point, face_index, local_origin, local_direction, None)
 
-    def mesh_operation_closest(self, mesh_id, origin) -> mesh_chart_point:
+    def mesh_operation_closest(self, mesh_id, origin):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         local_origin = math_transform_points(origin, pose.T, True)
         point, face_index, _, = mesh_closest(mesh_a, local_origin)
         return mesh_chart_point(point, face_index, local_origin, None, None)
 
-    def smpl_chart_create_frame(self, mesh_id, region) -> mesh_chart_frame:
+    def smpl_chart_create_frame(self, mesh_id, region):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         return chart.create_frame(region)
     
-    def smpl_chart_from_cylindrical(self, mesh_id, frame, displacement, yaw) -> mesh_chart_point: 
+    def smpl_chart_from_cylindrical(self, mesh_id, frame, displacement, yaw): 
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         return chart.from_cylindrical(frame, displacement, yaw)
     
-    def smpl_chart_from_spherical(self, mesh_id, frame, yaw, pitch) -> mesh_chart_point:
+    def smpl_chart_from_spherical(self, mesh_id, frame, yaw, pitch):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         return chart.from_spherical(frame, yaw, pitch)
     
-    def smpl_chart_to_cylindrical(self, mesh_id, frame, point) -> mesh_chart_local:
+    def smpl_chart_to_cylindrical(self, mesh_id, frame, point):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         local_point = math_transform_points(point, pose.T, True)
         return chart.to_cylindrical(frame, local_point)
     
-    def smpl_chart_to_spherical(self, mesh_id, frame, point) -> mesh_chart_local:
+    def smpl_chart_to_spherical(self, mesh_id, frame, point):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         local_point = math_transform_points(point, pose.T, True)
         return chart.to_spherical(frame, local_point)
@@ -1640,58 +1667,26 @@ class renderer:
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
         face_index, point = (anchor.face_index, anchor.point) if (not fixed) else (anchor, None)
-        d = renderer_mesh_paint_descriptor(0, layer_id, 0)
-        effect.color_create_solid(d.resource_id, color, stop_level, d.layer_id)
-        effect.task_create_paint_color(d.task_id, mesh_a, mesh_b, face_index, point, d.resource_id, tolerance, fixed)
-        data = effect.task_execute(d.task_id, timeout, steps)
-        done = effect.task_done(d.task_id)
-        effect.task_delete(d.task_id)
-        effect.color_delete(d.resource_id)
-        return (done, data) # tuple return
+        return effect.paint_color_solid(mesh_a, mesh_b, face_index, point, color, stop_level, tolerance, fixed, layer_id, timeout, steps)
     
     def smpl_paint_brush_solid(self, mesh_id, anchor, size, color, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
-        d = renderer_mesh_paint_descriptor(0, layer_id, 1)
-        effect.brush_create_solid(d.resource_id, size, color, d.layer_id, fill_test)
-        effect.task_create_paint_brush(d.task_id, mesh_a, mesh_b, anchor.face_index, anchor.point, d.resource_id, tolerance)
-        data = effect.task_execute(d.task_id, timeout, steps)
-        done = effect.task_done(d.task_id)
-        effect.task_delete(d.task_id)
-        effect.brush_delete(d.resource_id)
-        return (done, data) # tuple return
+        return effect.paint_brush_solid(mesh_a, mesh_b, anchor.face_index, anchor.point, size, color, fill_test, tolerance, layer_id, timeout, steps)
     
     def smpl_paint_brush_gradient(self, mesh_id, anchor, size, color_center, color_edge, hardness, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
-        d = renderer_mesh_paint_descriptor(1, layer_id, 2)
-        effect.brush_create_gradient(d.resource_id, size, color_center, color_edge, hardness, d.layer_id, fill_test)
-        effect.task_create_paint_brush(d.task_id, mesh_a, mesh_b, anchor.face_index, anchor.point, d.resource_id, tolerance)
-        data = effect.task_execute(d.task_id, timeout, steps)
-        done = effect.task_done(d.task_id)
-        effect.task_delete(d.task_id)
-        effect.brush_delete(d.resource_id)
-        return (done, data) # tuple return
+        return effect.paint_brush_gradient(mesh_a, mesh_b, anchor.face_index, anchor.point, size, color_center, color_edge, hardness, fill_test, tolerance, layer_id, timeout, steps)
     
     def smpl_paint_decal_solid(self, mesh_id, anchor, decal, align_prior, angle, scale, double_cover_test=True, fill_test=0.0, tolerance_decal=0, tolerance_paint=0, layer_id=0, timeout=0.05, steps=1):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
-        d = renderer_mesh_paint_descriptor(0, layer_id, 3)
-        effect.texture_attach(d.resource_id, decal)
-        effect.decal_create_solid(d.resource_id, align_prior, angle, scale, d.resource_id, d.layer_id, double_cover_test, fill_test, tolerance_decal)
-        effect.task_create_paint_decal(d.task_id, mesh_a, mesh_b, anchor.face_index, anchor.point, d.resource_id, tolerance_paint)
-        data = effect.task_execute(d.task_id, timeout, steps)
-        done = effect.task_done(d.task_id)
-        effect.task_delete(d.task_id)
-        effect.decal_delete(d.resource_id)
-        effect.texture_detach(d.resource_id)
-        return (done, data) # tuple return
+        return effect.paint_decal_solid(mesh_a, mesh_b, anchor.face_index, anchor.point, decal, align_prior, angle, scale, double_cover_test, fill_test, tolerance_decal, tolerance_paint, layer_id, timeout, steps)
     
     def smpl_paint_decal_align_prior(self, mesh_id, anchor, align_axis, align_axis_fallback, tolerance=0):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
-        align_normal = mesh_a.face_normals[anchor.face_index:(anchor.face_index + 1), :]
-        align_prior, nap = math_normalize(align_axis - (align_normal @ align_axis.T) * align_normal)
-        return align_prior if (nap > tolerance) else math_normalize(align_axis_fallback - (align_normal @ align_axis_fallback.T) * align_normal)[0]
+        return mesh_align_prior(mesh_a, anchor.face_index, align_axis, align_axis_fallback, tolerance)
     
     def smpl_paint_clear(self, mesh_id, enabled_only=False):
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
@@ -1700,4 +1695,146 @@ class renderer:
     def smpl_paint_flush(self, mesh_id, force_alpha=None):
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
         effect.flush(force_alpha)
+
+
+#------------------------------------------------------------------------------
+# Renderer
+#------------------------------------------------------------------------------
+
+class renderer:
+    def __init__(self, settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp):
+        self._scene_control = renderer_scene_control(settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp)
+
+    def smpl_load_model(self, model_path, num_betas, device):
+        self._smpl_control = smpl_model(model_path, num_betas, device)
+    
+    def smpl_load_uv(self, filename_uv, texture_shape):
+        self._mesh_control = renderer_mesh_control(filename_uv, texture_shape)
+
+    def smpl_get_mesh(self, smpl_params) -> smpl_model_result:
+        return self._smpl_control.to_mesh(smpl_params)
+
+    def camera_get_pose(self):
+        return self._scene_control.camera_get_pose()
+
+    def camera_get_projection_matrix(self):
+        return self._scene_control.camera_get_projection_matrix()
+
+    def camera_get_transform_local(self):
+        return self._scene_control.camera_get_transform_local()
+
+    def camera_get_transform_plane(self):
+        return self._scene_control.camera_get_transform_plane()   
+    
+    def camera_get_parameters(self) -> renderer_camera_transform_parameters:
+        return self._scene_control.camera_get_parameters()
+
+    def camera_adjust_parameters(self, yaw=None, pitch=None, distance=None, center=None, relative=True):
+        self._scene_control.camera_adjust_parameters(yaw, pitch, distance, center, relative)
+
+    def camera_move_center(self, delta_xyz, plane=True):
+        self._scene_control.camera_move_center(delta_xyz, plane)
+
+    def camera_solve_fov_z(self, center, points, plane=False):
+        return self._scene_control.camera_solve_fov_z(center, points, plane)
+    
+    def camera_project_points(self, points, convention=(1, -1, -1)):
+        return self._scene_control.camera_project_points(points, convention)
+    
+    def scene_render(self):
+        return self._scene_control.render()
+    
+    def mesh_add_smpl(self, group, name, mesh, joints, texture, pose) -> renderer_mesh_identifier:
+        return self._mesh_control.mesh_add_smpl(group, name, mesh, joints, texture, pose)
+    
+    def mesh_add_user(self, group, name, mesh, pose) -> renderer_mesh_identifier:
+        return self._mesh_control.mesh_add_user(group, name, mesh, pose)
+
+    def mesh_set_pose(self, mesh_id, pose):
+        self._mesh_control.mesh_set_pose(mesh_id, pose)
+        self._scene_control.group_item_set_pose(mesh_id, pose)
+
+    def mesh_get_pose(self, mesh_id):
+        return self._mesh_control.mesh_get_pose(mesh_id)
+
+    def mesh_present(self, mesh_id):
+        mesh = self._mesh_control.mesh_get_full(mesh_id) if (mesh_id.kind == 'smpl') else self._mesh_control.mesh_get_base(mesh_id)
+        pose = self._mesh_control.mesh_get_pose(mesh_id)
+        item = mesh_to_renderer(mesh)
+        self._scene_control.group_item_add(mesh_id.group, mesh_id.name, item, pose)
+
+    def mesh_remove_item(self, mesh_id):
+        self._mesh_control.mesh_remove_item(mesh_id)
+        self._scene_control.group_item_remove(mesh_id)
+
+    def mesh_remove_group(self, group):
+        self._mesh_control.mesh_remove_group(group)
+        self._scene_control.group_clear(group)
+
+    def mesh_remove_all(self):
+        self._mesh_control.mesh_remove_all()
+        self._scene_control.clear()
+
+    def mesh_operation_raycast(self, mesh_id, origin, direction) -> mesh_chart_point:
+        return self._mesh_control.mesh_operation_raycast(mesh_id, origin, direction)
+
+    def mesh_operation_closest(self, mesh_id, origin) -> mesh_chart_point:
+        return self._mesh_control.mesh_operation_closest(mesh_id, origin)
+
+    def smpl_chart_create_frame(self, mesh_id, region) -> mesh_chart_frame:
+        return self._mesh_control.smpl_chart_create_frame(mesh_id, region)
+    
+    def smpl_chart_from_cylindrical(self, mesh_id, frame, displacement, yaw) -> mesh_chart_point:
+        return self._mesh_control.smpl_chart_from_cylindrical(mesh_id, frame, displacement, yaw)
+    
+    def smpl_chart_from_spherical(self, mesh_id, frame, yaw, pitch) -> mesh_chart_point:
+        return self._mesh_control.smpl_chart_from_spherical(mesh_id, frame, yaw, pitch)
+
+    def smpl_chart_to_cylindrical(self, mesh_id, frame, point) -> mesh_chart_local:
+        return self._mesh_control.smpl_chart_to_cylindrical(mesh_id, frame, point)
+    
+    def smpl_chart_to_spherical(self, mesh_id, frame, point) -> mesh_chart_local:
+        return self._mesh_control.smpl_chart_to_spherical(mesh_id, frame, point)
+
+    def smpl_chart_to_pose(self, mesh_id, frame):
+        return self._mesh_control.smpl_chart_to_pose(mesh_id, frame)
+
+    def smpl_paint_set_background(self, mesh_id, background):
+        self._mesh_control.smpl_paint_set_background(mesh_id, background)
+    
+    def smpl_paint_layer_create(self, mesh_id, layer_id):
+        self._mesh_control.smpl_paint_layer_create(mesh_id, layer_id)
+    
+    def smpl_paint_layer_enable(self, mesh_id, layer_id, enable):
+        self._mesh_control.smpl_paint_layer_enable(mesh_id, layer_id, enable)
+    
+    def smpl_paint_layer_clear(self, mesh_id, layer_id):
+        self._mesh_control.smpl_paint_layer_clear(mesh_id, layer_id)
+    
+    def smpl_paint_layer_erase(self, mesh_id, result):
+        self._mesh_control.smpl_paint_layer_erase(mesh_id, result.layer_id, result.data)
+    
+    def smpl_paint_layer_delete(self, mesh_id, layer_id):
+        self._mesh_control.smpl_paint_layer_delete(mesh_id, layer_id)
+    
+    def smpl_paint_color_solid(self, mesh_id, anchor, color, stop_level, tolerance=0, fixed=False, layer_id=0, timeout=0.05, steps=1) -> renderer_mesh_paint_result:
+        return self._mesh_control.smpl_paint_color_solid(mesh_id, anchor, color, stop_level, tolerance, fixed, layer_id, timeout, steps)
+    
+    def smpl_paint_brush_solid(self, mesh_id, anchor, size, color, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1) -> renderer_mesh_paint_result:
+        return self._mesh_control.smpl_paint_brush_solid(mesh_id, anchor, size, color, fill_test, tolerance, layer_id, timeout, steps)
+    
+    def smpl_paint_brush_gradient(self, mesh_id, anchor, size, color_center, color_edge, hardness, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1) -> renderer_mesh_paint_result:
+        return self._mesh_control.smpl_paint_brush_gradient(mesh_id, anchor, size, color_center, color_edge, hardness, fill_test, tolerance, layer_id, timeout, steps)
+    
+    def smpl_paint_decal_solid(self, mesh_id, anchor, decal, align_prior, angle, scale, double_cover_test=True, fill_test=0.0, tolerance_decal=0, tolerance_paint=0, layer_id=0, timeout=0.05, steps=1) -> renderer_mesh_paint_result:
+        return self._mesh_control.smpl_paint_decal_solid(mesh_id, anchor, decal, align_prior, angle, scale, double_cover_test, fill_test, tolerance_decal, tolerance_paint, layer_id, timeout, steps)
+    
+    def smpl_paint_decal_align_prior(self, mesh_id, anchor, align_axis, align_axis_fallback, tolerance=0) -> renderer_mesh_paint_result:
+        return self._mesh_control.smpl_paint_decal_align_prior(mesh_id, anchor, align_axis, align_axis_fallback, tolerance)
+
+    def smpl_paint_clear(self, mesh_id, enabled_only=False):
+        self._mesh_control.smpl_paint_clear(mesh_id, enabled_only)
+
+    def smpl_paint_flush(self, mesh_id, force_alpha=None):
+        self._mesh_control.smpl_paint_flush(mesh_id, force_alpha)
 
