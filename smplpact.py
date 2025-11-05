@@ -23,14 +23,15 @@ from PIL import Image, ImageFont, ImageDraw
 # File
 #------------------------------------------------------------------------------
 
-def scan_path(base_path, sort_order=None):
+def scan_path(base_path, files_sort=False, files_key=None, files_reverse=False, folders_sort=False, folders_key=None, folders_reverse=False):
     items = os.listdir(base_path)
     paths = [os.path.join(base_path, item) for item in items]
     files = [path for path in paths if (os.path.isfile(path))]
     folders = [path for path in paths if (os.path.isdir(path))]
-    if (sort_order is not None):
-        files.sort(reverse=sort_order)
-        folders.sort(reverse=sort_order)
+    if (files_sort):
+        files.sort(key=files_key, reverse=files_reverse)
+    if (folders_sort):
+        folders.sort(key=folders_key, reverse=folders_reverse)
     return (files, folders) # tuple return
 
 
@@ -278,7 +279,7 @@ def mesh_closest(mesh, origin):
 
 
 def mesh_align_prior(mesh, face_index, align_axis, align_axis_fallback, tolerance=0):
-    align_normal = mesh.face_normals[face_index:(face_index + 1), :]
+    align_normal = mesh.face_normals[np.newaxis, face_index, :]
     align_prior, nap = math_normalize(align_axis - (align_normal @ align_axis.T) * align_normal)
     return align_prior if (nap > tolerance) else math_normalize(align_axis_fallback - (align_normal @ align_axis_fallback.T) * align_normal)[0]
 
@@ -520,7 +521,7 @@ class mesh_neighborhood_operation_decal:
         return value == mesh_neighborhood_processor_command.EXPAND
 
     def paint(self, face_index, level):
-        self._face_normal = self._mesh_face_normals[face_index:(face_index + 1), :]        
+        self._face_normal = self._mesh_face_normals[np.newaxis, face_index, :]
         self._vertex_indices_b = self._mesh_faces[face_index]
         self._vertex_indices_a = self._uv_transform[self._vertex_indices_b]
         self._level = level
@@ -663,12 +664,12 @@ class paint_decal_solid:
         vips_a, viqs_a, vixs_a = indices_uvx[unwrapped_indices]
         vips_b, viqs_b, vixs_b = indices_vertices[unwrapped_indices]
 
-        vps = mesh_vertices[vips_b:(vips_b + 1), :]
-        vqs = mesh_vertices[viqs_b:(viqs_b + 1), :]
-        vxs = mesh_vertices[vixs_b:(vixs_b + 1), :]
+        vps = mesh_vertices[np.newaxis, vips_b, :]
+        vqs = mesh_vertices[np.newaxis, viqs_b, :]
+        vxs = mesh_vertices[np.newaxis, vixs_b, :]
 
-        vpd = self._image_uvx[vips_a:(vips_a + 1), :]
-        vqd = self._image_uvx[viqs_a:(viqs_a + 1), :]
+        vpd = self._image_uvx[np.newaxis, vips_a, :]
+        vqd = self._image_uvx[np.newaxis, viqs_a, :]
 
         align_outward = geometry_solve_basis(vqs - vps, face_normal, vqd - vpd, self._uvx_normal)
 
@@ -681,7 +682,7 @@ class paint_decal_solid:
             return mesh_neighborhood_processor_command.IGNORE
 
         self._push_simplex(np.vstack((vxd[:, 0:2], vqd[:, 0:2], vpd[:, 0:2])))
-        self._image_uvx[vixs_a:(vixs_a + 1), :] = vxd
+        self._image_uvx[np.newaxis, vixs_a, :] = vxd
 
         return mesh_neighborhood_processor_command.EXPAND
 
@@ -852,8 +853,99 @@ def smpl_camera_align_Rt(K_smpl, K_dst, points_world):
 
 def smpl_camera_align_dz(K_smpl, K_dst, points_world):
     K = K_smpl @ np.linalg.inv(K_dst)
-    s = (K[0,0] + K[1,1]) / 2
+    s = (K[0, 0] + K[1, 1]) / 2
     return ((1 / s) * K, 0) # tuple return
+
+
+class smpl_joints:
+    pelvis = 0
+    left_hip = 1
+    right_hip = 2
+    spine_1 = 3
+    left_knee = 4
+    right_knee = 5
+    spine_2 = 6
+    left_ankle = 7
+    right_ankle = 8
+    spine_3 = 9
+    left_foot = 10
+    right_foot = 11
+    neck = 12
+    left_collar = 13
+    right_collar = 14
+    head = 15
+    left_shoulder = 16
+    right_shoulder = 17
+    left_elbow = 18
+    right_elbow = 19
+    left_wrist = 20
+    right_wrist = 21
+    left_hand = 22
+    right_hand = 23
+
+
+class smpl_joints_x1:
+    nose = 24
+    right_eye = 25
+    left_eye = 26
+    right_ear = 27
+    left_ear = 28
+    left_big_toe = 29
+    left_small_toe = 30
+    left_heel = 31
+    right_big_toe = 32
+    right_small_toe = 33
+    right_heel = 34
+    left_thumb = 35
+    left_index = 36
+    left_middle = 37
+    left_ring = 38
+    left_pinky = 39
+    right_thumb = 40
+    right_index = 41
+    right_middle = 42
+    right_ring = 43
+    right_pinky = 44
+
+
+class smpl_joints_x2:
+    right_hip = 45
+    left_hip = 46
+    lsp_neck = 47
+    lsp_top_of_head = 48
+    mpii_pelvis = 49
+    mpii_thorax = 50
+    h36m_spine = 51
+    h36m_jaw = 52
+    h36m_head = 53
+
+
+class smpl_joints_openpose:
+    Nose = 0
+    Neck = 1
+    RShoulder = 2
+    RElbow = 3
+    RWrist = 4
+    LShoulder = 5
+    LElbow = 6
+    LWrist = 7
+    MidHip = 8
+    RHip = 9
+    RKnee = 10
+    RAnkle = 11
+    LHip = 12
+    LKnee = 13
+    LAnkle = 14
+    REye = 15
+    LEye = 16
+    REar = 17
+    LEar = 18
+    LBigToe = 19
+    LSmallToe = 20
+    LHeel = 21
+    RBigToe = 22
+    RSmallToe = 23
+    RHeel = 24
 
 
 class smpl_mesh_chart_openpose(mesh_chart):
@@ -877,18 +969,18 @@ class smpl_mesh_chart_openpose(mesh_chart):
         return mesh_chart_frame(left, up, front, center, length, points)
     
     def _create_frame_foot_left(self):
-        bigtoe   = self._joints[19:20, :]
-        smalltoe = self._joints[20:21, :]
-        ankle    = self._joints[14:15, :]
-        heel     = self._joints[21:22, :]
+        bigtoe   = self._joints[np.newaxis, smpl_joints_openpose.LBigToe, :]
+        smalltoe = self._joints[np.newaxis, smpl_joints_openpose.LSmallToe, :]
+        ankle    = self._joints[np.newaxis, smpl_joints_openpose.LAnkle, :]
+        heel     = self._joints[np.newaxis, smpl_joints_openpose.LHeel, :]
 
         return self._template_frame_foot(bigtoe, smalltoe, ankle, heel)
     
     def _create_frame_foot_right(self):
-        bigtoe   = self._joints[22:23, :]
-        smalltoe = self._joints[23:24, :]
-        ankle    = self._joints[11:12, :]
-        heel     = self._joints[24:25, :]
+        bigtoe   = self._joints[np.newaxis, smpl_joints_openpose.RBigToe, :]
+        smalltoe = self._joints[np.newaxis, smpl_joints_openpose.RSmallToe, :]
+        ankle    = self._joints[np.newaxis, smpl_joints_openpose.RAnkle, :]
+        heel     = self._joints[np.newaxis, smpl_joints_openpose.RHeel, :]
 
         return self._template_frame_foot(bigtoe, smalltoe, ankle, heel)
 
@@ -908,16 +1000,16 @@ class smpl_mesh_chart_openpose(mesh_chart):
         return mesh_chart_frame(left, up, front, center, length, points)
 
     def _create_frame_lower_leg_left(self):
-        bigtoe = self._joints[19:20, :]
-        ankle  = self._joints[14:15, :]
-        knee   = self._joints[13:14, :]
+        bigtoe = self._joints[np.newaxis, smpl_joints_openpose.LBigToe, :]
+        ankle  = self._joints[np.newaxis, smpl_joints_openpose.LAnkle, :]
+        knee   = self._joints[np.newaxis, smpl_joints_openpose.LKnee, :]
 
         return self._template_frame_lower_leg(bigtoe, ankle, knee)
     
     def _create_frame_lower_leg_right(self):
-        bigtoe = self._joints[22:23, :]
-        ankle  = self._joints[11:12, :]
-        knee   = self._joints[10:11, :]
+        bigtoe = self._joints[np.newaxis, smpl_joints_openpose.RBigToe, :]
+        ankle  = self._joints[np.newaxis, smpl_joints_openpose.RAnkle, :]
+        knee   = self._joints[np.newaxis, smpl_joints_openpose.RKnee, :]
 
         return self._template_frame_lower_leg(bigtoe, ankle, knee)
 
@@ -937,16 +1029,16 @@ class smpl_mesh_chart_openpose(mesh_chart):
         return mesh_chart_frame(left, up, front, center, length, points)
     
     def _create_frame_thigh_left(self):
-        ankle = self._joints[14:15, :]
-        knee  = self._joints[13:14, :]
-        hip   = self._joints[12:13, :]
+        ankle = self._joints[np.newaxis, smpl_joints_openpose.LAnkle, :]
+        knee  = self._joints[np.newaxis, smpl_joints_openpose.LKnee, :]
+        hip   = self._joints[np.newaxis, smpl_joints_openpose.LHip, :]
 
         return self._template_frame_thigh(ankle, knee, hip)
 
     def _create_frame_thigh_right(self):
-        ankle = self._joints[11:12, :]
-        knee  = self._joints[10:11, :]
-        hip   = self._joints[9:10, :]
+        ankle = self._joints[np.newaxis, smpl_joints_openpose.RAnkle, :]
+        knee  = self._joints[np.newaxis, smpl_joints_openpose.RKnee, :]
+        hip   = self._joints[np.newaxis, smpl_joints_openpose.RHip, :]
 
         return self._template_frame_thigh(ankle, knee, hip)
     
@@ -966,10 +1058,10 @@ class smpl_mesh_chart_openpose(mesh_chart):
         return mesh_chart_frame(left, up, front, center, length, points)
     
     def _create_frame_body_center(self):
-        lhip = self._joints[12:13, :]
-        mhip = self._joints[8:9, :]
-        rhip = self._joints[9:10, :]
-        neck = self._joints[1:2, :]
+        lhip = self._joints[np.newaxis, smpl_joints_openpose.LHip, :]
+        mhip = self._joints[np.newaxis, smpl_joints_openpose.MidHip, :]
+        rhip = self._joints[np.newaxis, smpl_joints_openpose.RHip, :]
+        neck = self._joints[np.newaxis, smpl_joints_openpose.Neck, :]
 
         return self._template_frame_body(lhip, mhip, rhip, neck)
 
@@ -990,10 +1082,10 @@ class smpl_mesh_chart_openpose(mesh_chart):
         return mesh_chart_frame(left, up, front, center, length, points)
     
     def _create_frame_head_center(self):
-        lear = self._joints[18:19, :]
-        rear = self._joints[17:18, :]
-        neck = self._joints[1:2, :]
-        nose = self._joints[0:1, :]
+        lear = self._joints[np.newaxis, smpl_joints_openpose.LEar, :]
+        rear = self._joints[np.newaxis, smpl_joints_openpose.REar, :]
+        neck = self._joints[np.newaxis, smpl_joints_openpose.Neck, :]
+        nose = self._joints[np.newaxis, smpl_joints_openpose.Nose, :]
 
         return self._template_frame_head(lear, rear, neck, nose)
     
@@ -1013,16 +1105,16 @@ class smpl_mesh_chart_openpose(mesh_chart):
         return mesh_chart_frame(left, up, front, center, length, points)
 
     def _create_frame_upper_arm_left(self):
-        wrist    = self._joints[7:8, :]
-        elbow    = self._joints[6:7, :]
-        shoulder = self._joints[5:6, :]
+        wrist    = self._joints[np.newaxis, smpl_joints_openpose.LWrist, :]
+        elbow    = self._joints[np.newaxis, smpl_joints_openpose.LElbow, :]
+        shoulder = self._joints[np.newaxis, smpl_joints_openpose.LShoulder, :]
 
         return self._template_frame_upper_arm(wrist, elbow, shoulder)
 
     def _create_frame_upper_arm_right(self):
-        wrist    = self._joints[4:5, :]
-        elbow    = self._joints[3:4, :]
-        shoulder = self._joints[2:3, :]
+        wrist    = self._joints[np.newaxis, smpl_joints_openpose.RWrist, :]
+        elbow    = self._joints[np.newaxis, smpl_joints_openpose.RElbow, :]
+        shoulder = self._joints[np.newaxis, smpl_joints_openpose.RShoulder, :]
 
         return self._template_frame_upper_arm(wrist, elbow, shoulder)
 
@@ -1042,16 +1134,16 @@ class smpl_mesh_chart_openpose(mesh_chart):
         return mesh_chart_frame(left, up, front, center, length, points)
 
     def _create_frame_lower_arm_left(self):
-        wrist    = self._joints[7:8, :]
-        elbow    = self._joints[6:7, :]
-        shoulder = self._joints[5:6, :]
+        wrist    = self._joints[np.newaxis, smpl_joints_openpose.LWrist, :]
+        elbow    = self._joints[np.newaxis, smpl_joints_openpose.LElbow, :]
+        shoulder = self._joints[np.newaxis, smpl_joints_openpose.LShoulder, :]
 
         return self._template_frame_lower_arm(wrist, elbow, shoulder)
 
     def _create_frame_lower_arm_right(self):
-        wrist    = self._joints[4:5, :]
-        elbow    = self._joints[3:4, :]
-        shoulder = self._joints[2:3, :]
+        wrist    = self._joints[np.newaxis, smpl_joints_openpose.RWrist, :]
+        elbow    = self._joints[np.newaxis, smpl_joints_openpose.RElbow, :]
+        shoulder = self._joints[np.newaxis, smpl_joints_openpose.RShoulder, :]
 
         return self._template_frame_lower_arm(wrist, elbow, shoulder)
 
@@ -1078,7 +1170,7 @@ class smpl_model:
     
 
 class smpl_model_filtered(smpl_model):
-    def __init__(self, model_path, num_betas, device, weight=0.25):
+    def __init__(self, model_path, num_betas, device, weight=0.10):
         super().__init__(model_path, num_betas, device)
         self._alpha = torch.scalar_tensor(weight, dtype=torch.float32, device=device)
         self._l = False
@@ -1091,10 +1183,10 @@ class smpl_model_filtered(smpl_model):
         self._alpha = torch.scalar_tensor(weight, dtype=self._alpha.dtype, device=self._alpha.device)        
 
     def to_mesh(self, smpl_params, openpose_joints=True):
-        global_orient = smpl_params['global_orient'] # n, 1, 3, 3
-        body_pose = smpl_params['body_pose'] # n 23 3 3
-        betas = smpl_params['betas'] # n 10
-        transl = smpl_params['transl'] # n 3
+        global_orient = smpl_params['global_orient'][0:1] # n, 1, 3, 3
+        body_pose = smpl_params['body_pose'][0:1] # n 23 3 3
+        betas = smpl_params['betas'][0:1] # n 10
+        transl = smpl_params['transl'][0:1] # n 3
 
         if (not self._l):
             self._g = global_orient
@@ -1102,20 +1194,39 @@ class smpl_model_filtered(smpl_model):
             self._b = betas
             self._t = transl
             self._l = True
-            print(self._g.shape)
-            print(self._p.shape)
-            print(self._t.shape)
-            print(self._b.shape)
-            print('END DEF')
+            self._prev_p = body_pose
+            #self._dg = 0.5
+            #print(self._g.shape)
+            #print(self._p.shape)
+            #print(self._t.shape)
+            #print(self._b.shape)
+            #print('END DEF')
         else:
+            dg = torch.min((np.pi - roma.rotmat_geodesic_distance(self._prev_p, body_pose)) / np.pi)
+            dg = dg * dg
+            self._prev_p = body_pose
+            #print(global_orient.shape)
+            #print(body_pose.shape)
+            #print(transl.shape)
+            #print(betas.shape)
+            #self._dg = self._dg + self._alpha * ( - self._dg)
+            
+            #print(dg)
+
+
+
+
+
+
             self._g = roma.rotmat_slerp(self._g, global_orient, self._alpha)
-            self._p = roma.rotmat_slerp(self._p, body_pose, self._alpha)
+            self._p = roma.rotmat_slerp(self._p, body_pose, dg * self._alpha) #self._alpha)
+            print(self._p.shape)
             self._t = self._t + self._alpha * (transl - self._t)
             self._b = self._b + self._alpha * (betas - self._b) # linear??
-            print(self._g.shape)
-            print(self._p.shape)
-            print(self._t.shape)
-            print(self._b.shape)
+            #print(self._g.shape)
+            #print(self._p.shape)
+            #print(self._t.shape)
+            #print(self._b.shape)
 
 
         smpl_params['global_orient'] = self._g
@@ -1775,7 +1886,7 @@ class renderer:
         self._scene_control = renderer_scene_control(settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp)
 
     def smpl_load_model(self, model_path, num_betas, device):
-        self._smpl_control = smpl_model_filtered(model_path, num_betas, device)
+        self._smpl_control = smpl_model(model_path, num_betas, device)
     
     def smpl_load_uv(self, filename_uv, texture_shape):
         self._mesh_control = renderer_mesh_control(filename_uv, texture_shape)
@@ -1907,3 +2018,11 @@ class renderer:
     def smpl_paint_flush(self, mesh_id, force_alpha=None, stencil_layer=None):
         self._mesh_control.smpl_paint_flush(mesh_id, force_alpha, stencil_layer)
 
+
+
+
+
+def project_points(world_points, K):
+    camera_points = world_points @ K
+    camera_points = camera_points[:, 0:2] / camera_points[:, 2:3]
+    return camera_points
