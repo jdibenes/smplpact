@@ -2,6 +2,7 @@
 # SMPL Painting And Charting Tools
 #==============================================================================
 
+import os
 import time
 import math
 import collections
@@ -13,8 +14,24 @@ import pyrender
 import trimesh.visual
 import trimesh.exchange.obj
 import smplx
+import roma
 
 from PIL import Image, ImageFont, ImageDraw
+
+
+#------------------------------------------------------------------------------
+# File
+#------------------------------------------------------------------------------
+
+def scan_path(base_path, sort_order=None):
+    items = os.listdir(base_path)
+    paths = [os.path.join(base_path, item) for item in items]
+    files = [path for path in paths if (os.path.isfile(path))]
+    folders = [path for path in paths if (os.path.isdir(path))]
+    if (sort_order is not None):
+        files.sort(reverse=sort_order)
+        folders.sort(reverse=sort_order)
+    return (files, folders) # tuple return
 
 
 #------------------------------------------------------------------------------
@@ -836,7 +853,7 @@ def smpl_camera_align_Rt(K_smpl, K_dst, points_world):
 def smpl_camera_align_dz(K_smpl, K_dst, points_world):
     K = K_smpl @ np.linalg.inv(K_dst)
     s = (K[0,0] + K[1,1]) / 2
-    return ((1/s)*K, 0) # tuple return
+    return ((1 / s) * K, 0) # tuple return
 
 
 class smpl_mesh_chart_openpose(mesh_chart):
@@ -1058,6 +1075,56 @@ class smpl_model:
         vertices = smpl_output.vertices
         joints = smpl_output.joints.index_select(1, self._smpl_to_open_pose) if (openpose_joints) else smpl_output.joints
         return smpl_model_result(vertices.cpu().numpy(), self._smpl_model.faces, joints.cpu().numpy())
+    
+
+class smpl_model_filtered(smpl_model):
+    def __init__(self, model_path, num_betas, device, weight=0.25):
+        super().__init__(model_path, num_betas, device)
+        self._alpha = torch.scalar_tensor(weight, dtype=torch.float32, device=device)
+        self._l = False
+        self._g = None
+        self._p = None
+        self._b = None
+        self._t = None
+
+    def set_weight(self, weight):
+        self._alpha = torch.scalar_tensor(weight, dtype=self._alpha.dtype, device=self._alpha.device)        
+
+    def to_mesh(self, smpl_params, openpose_joints=True):
+        global_orient = smpl_params['global_orient'] # n, 1, 3, 3
+        body_pose = smpl_params['body_pose'] # n 23 3 3
+        betas = smpl_params['betas'] # n 10
+        transl = smpl_params['transl'] # n 3
+
+        if (not self._l):
+            self._g = global_orient
+            self._p = body_pose
+            self._b = betas
+            self._t = transl
+            self._l = True
+            print(self._g.shape)
+            print(self._p.shape)
+            print(self._t.shape)
+            print(self._b.shape)
+            print('END DEF')
+        else:
+            self._g = roma.rotmat_slerp(self._g, global_orient, self._alpha)
+            self._p = roma.rotmat_slerp(self._p, body_pose, self._alpha)
+            self._t = self._t + self._alpha * (transl - self._t)
+            self._b = self._b + self._alpha * (betas - self._b) # linear??
+            print(self._g.shape)
+            print(self._p.shape)
+            print(self._t.shape)
+            print(self._b.shape)
+
+
+        smpl_params['global_orient'] = self._g
+        smpl_params['body_pose'] = self._p
+        smpl_params['betas'] = self._b
+        smpl_params['transl'] = self._t
+
+        return super().to_mesh(smpl_params, openpose_joints)
+
 
 
 #------------------------------------------------------------------------------
@@ -1708,7 +1775,7 @@ class renderer:
         self._scene_control = renderer_scene_control(settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp)
 
     def smpl_load_model(self, model_path, num_betas, device):
-        self._smpl_control = smpl_model(model_path, num_betas, device)
+        self._smpl_control = smpl_model_filtered(model_path, num_betas, device)
     
     def smpl_load_uv(self, filename_uv, texture_shape):
         self._mesh_control = renderer_mesh_control(filename_uv, texture_shape)
