@@ -336,8 +336,30 @@ def mesh_select_complete_faces(mesh, vertex_indices):
 
 
 # TODO: this is slow
-def mesh_to_renderer(mesh):
-    return pyrender.Mesh.from_trimesh(mesh)
+def mesh_to_renderer(mesh, split=None):
+    m = pyrender.Mesh.from_trimesh(mesh)
+
+    if (split is None):
+        return m
+    
+    primitive = m.primitives[0]
+
+    positions = primitive.positions
+    normals = primitive.normals
+    texcoord_0 = primitive.texcoord_0
+    color_0 = primitive.color_0
+    indices = primitive.indices
+    material = primitive.material
+    mode = primitive.mode
+    poses = primitive.poses
+
+    indices_a = np.delete(indices, split, 0)
+    indices_b = indices[split, :]
+
+    pa = pyrender.Primitive(positions=positions, normals=normals, texcoord_0=texcoord_0, color_0=color_0, indices=indices_a, material=material, mode=mode, poses=poses)
+    pb = pyrender.Primitive(positions=positions, normals=normals, texcoord_0=texcoord_0, color_0=color_0, indices=indices_b, material=material, mode=mode, poses=poses)
+
+    return pyrender.Mesh(primitives=[pa, pb])
 
 
 class mesh_neighborhood_builder:
@@ -1955,10 +1977,10 @@ class renderer:
     def mesh_get_pose(self, mesh_id):
         return self._mesh_control.mesh_get_pose(mesh_id)
 
-    def mesh_present(self, mesh_id):
+    def mesh_present(self, mesh_id, split=None):
         mesh = self._mesh_control.mesh_get_full(mesh_id) if (mesh_id.kind == 'smpl') else self._mesh_control.mesh_get_base(mesh_id)
         pose = self._mesh_control.mesh_get_pose(mesh_id)
-        item = mesh_to_renderer(mesh)
+        item = mesh_to_renderer(mesh, split)
         self._scene_control.group_item_add(mesh_id.group, mesh_id.name, item, pose)
 
     def mesh_remove_item(self, mesh_id):
@@ -2047,4 +2069,5 @@ def project_points(world_points, K):
     camera_points = world_points @ K
     camera_points = camera_points[:, 0:2] / camera_points[:, 2:3]
     return camera_points
+
 
