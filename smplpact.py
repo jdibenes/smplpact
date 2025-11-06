@@ -1362,6 +1362,7 @@ class smpl_model:
     _SMPL_TO_OPENPOSE = [24, 12, 17, 19, 21, 16, 18, 20, 0, 2, 5, 8, 1, 4, 7, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34]
 
     def __init__(self, model_path, num_betas, device):
+        self._device = device
         self._smpl_model = smplx.SMPLLayer(model_path=model_path, num_betas=num_betas).to(device)
         self._smpl_to_open_pose = torch.tensor(smpl_model._SMPL_TO_OPENPOSE, dtype=torch.long, device=device)
 
@@ -1373,23 +1374,56 @@ class smpl_model:
     
 
 class smpl_model_filtered(smpl_model):
-    def __init__(self, model_path, num_betas, device, weight=0.10):
+    def __init__(self, model_path, num_betas, device):
         super().__init__(model_path, num_betas, device)
-        self._alpha = torch.scalar_tensor(weight, dtype=torch.float32, device=device)
-        self._l = False
-        self._g = None
-        self._p = None
-        self._b = None
-        self._t = None
 
-    def set_weight(self, weight):
-        self._alpha = torch.scalar_tensor(weight, dtype=self._alpha.dtype, device=self._alpha.device)        
+    def reset(self):
+        self._loaded = False
+
+    def configure(self, bounding_box=None, orientation=None, weight=None):
+        if (weight is not None):
+            self._weight = torch.scalar_tensor(weight, dtype=torch.float32, device=self._device)
+        if (bounding_box is not None):
+            self._bounding_box = bounding_box
+        if (orientation is not None):
+            self._orientation = orientation
+
+
+
+
+
+
+        
+
+
 
     def to_mesh(self, smpl_params, openpose_joints=True):
         global_orient = smpl_params['global_orient'][0:1] # n, 1, 3, 3
         body_pose = smpl_params['body_pose'][0:1] # n 23 3 3
         betas = smpl_params['betas'][0:1] # n 10
         transl = smpl_params['transl'][0:1] # n 3
+
+        #mesh = super().to_mesh(smpl_params)
+
+
+        
+        
+
+        
+        j = [smpl_joints_openpose.MidHip,
+             smpl_joints_openpose.LHip,
+             smpl_joints_openpose.RHip,
+             smpl_joints_openpose.LShoulder,
+             smpl_joints_openpose.RShoulder]
+
+        #mesh.joints[]
+
+
+
+
+
+                    # BOUNDING BOX
+    # CHEST ORIENTATION WRT CAMERA
 
         if (not self._l):
             self._g = global_orient
@@ -1421,6 +1455,7 @@ class smpl_model_filtered(smpl_model):
 
 
 
+
             self._g = roma.rotmat_slerp(self._g, global_orient, self._alpha)
             self._p = roma.rotmat_slerp(self._p, body_pose, dg * self._alpha) #self._alpha)
             print(self._p.shape)
@@ -1438,7 +1473,6 @@ class smpl_model_filtered(smpl_model):
         smpl_params['transl'] = self._t
 
         return super().to_mesh(smpl_params, openpose_joints)
-
 
 
 #------------------------------------------------------------------------------
@@ -1927,7 +1961,7 @@ class renderer:
         self._scene_control = renderer_scene_control(settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp)
 
     def smpl_load_model(self, model_path, num_betas, device):
-        self._smpl_control = smpl_model(model_path, num_betas, device)
+        self._smpl_control = smpl_model_filtered(model_path, num_betas, device)
     
     def smpl_load_uv(self, filename_uv, texture_shape):
         self._mesh_control = renderer_mesh_control(filename_uv, texture_shape)
@@ -1983,6 +2017,12 @@ class renderer:
         pose = self._mesh_control.mesh_get_pose(mesh_id)
         item = mesh_to_renderer(mesh, split)
         self._scene_control.group_item_add(mesh_id.group, mesh_id.name, item, pose)
+
+    def mesh_present_smpl(self, mesh_id, split=None):
+        self.mesh_present(mesh_id, split)
+
+    def mesh_present_user(self, mesh_id):
+        self.mesh_present(mesh_id)
 
     def mesh_remove_item(self, mesh_id):
         self._mesh_control.mesh_remove_item(mesh_id)
@@ -2070,5 +2110,6 @@ def project_points(world_points, K):
     camera_points = world_points @ K
     camera_points = camera_points[:, 0:2] / camera_points[:, 2:3]
     return camera_points
+
 
 
