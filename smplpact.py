@@ -737,13 +737,17 @@ class mesh_paint_result:
 
 
 class mesh_paint:
-    def __init__(self, uvx, render_target, uv_transform, background):
+    LAYER_ID_BG = -1
+    LAYER_KIND_COLOR = 0
+    LAYER_KIND_SCALE = 1
+
+    def __init__(self, uvx, render_target, uv_transform):
         self._uvx = uvx
         self._render_target = render_target
         self._uv_transform = uv_transform
-        self._background = background
         self._layers = dict()
         self._layer_enable = dict()
+        self._layer_kind = dict()
         self._colors = dict()
         self._textures = dict()
         self._brushes = dict()
@@ -751,14 +755,20 @@ class mesh_paint:
         self._tasks = dict()
 
     def set_background(self, background):
-        self._background = background
+        self._layers[mesh_paint.LAYER_ID_BG] = background
+        self._layer_enable[mesh_paint.LAYER_ID_BG] = False
+        self._layer_kind[mesh_paint.LAYER_ID_BG] = mesh_paint.LAYER_KIND_COLOR
 
     def layer_create(self, layer_id):
         self._layers[layer_id] = np.zeros_like(self._render_target)
         self._layer_enable[layer_id] = False
+        self._layer_kind[layer_id] = mesh_paint.LAYER_KIND_COLOR
 
     def layer_enable(self, layer_id, enable):
         self._layer_enable[layer_id] = enable
+
+    def layer_change(self, layer_id, layer_kind):
+        self._layer_kind[layer_id] = layer_kind
 
     def layer_clear(self, layer_id, color=0):
         self._layers[layer_id][:, :, :] = color
@@ -769,6 +779,7 @@ class mesh_paint:
     def layer_delete(self, layer_id):
         self._layers.pop(layer_id)
         self._layer_enable.pop(layer_id)
+        self._layer_kind.pop(layer_id)
 
     def texture_attach(self, texture_id, texture):
         self._textures[texture_id] = texture
@@ -821,25 +832,28 @@ class mesh_paint:
     def task_delete(self, task_id):
         self._tasks.pop(task_id)
 
-    def clear(self, enabled_only=False, color=0):
+    def clear(self, color=0):
         for key in self._layers.keys():
-            if ((not enabled_only) or self._layer_enable[key]):
+            if (self._layer_enable[key]):
                 self.layer_clear(key, color)
 
-    def flush(self, force_alpha=None, stencil_layer=None):
-        self._render_target[:, :, :] = self._background
+    def flush(self, force_alpha=None):
+        self._render_target[:, :, :] = self._layers[mesh_paint.LAYER_ID_BG]
         for key in sorted(self._layers.keys()):
-            if (self._layer_enable[key]):
-                self._render_target[:, :, :] = np.array(Image.alpha_composite(Image.fromarray(self._render_target), Image.fromarray(self._layers[key])))
+            enable = self._layer_enable[key]
+            if (enable):
+                kind = self._layer_kind[key]
+                if (kind == mesh_paint.LAYER_KIND_COLOR):
+                    self._render_target[:, :, :] = np.array(Image.alpha_composite(Image.fromarray(self._render_target), Image.fromarray(self._layers[key])))
+                elif (kind == mesh_paint.LAYER_KIND_SCALE):
+                    cv2.multiply(self._render_target, self._layers[key], self._render_target, 1/255)
         if (force_alpha is not None):
             self._render_target[:, :, 3] = force_alpha
-        if (stencil_layer is not None):
-            self._render_target[:, :, 3] = self._layers[stencil_layer][:, :, 3]
 
 
 class mesh_paint_single_pass(mesh_paint):
-    def __init__(self, uvx, render_target, uv_transform, background):
-        super().__init__(uvx, render_target, uv_transform, background)
+    def __init__(self, uvx, render_target, uv_transform):
+        super().__init__(uvx, render_target, uv_transform)
 
     def paint_color_solid(self, mesh_a, mesh_b, face_index, point, color, stop_level, tolerance=0, fixed=False, layer_id=0, timeout=0.05, steps=1):
         d = mesh_paint_descriptor(0, layer_id, 0)
@@ -1712,15 +1726,6 @@ class renderer_scene_control:
         self._groups.clear()
 
 
-
-
-
-
-
-
-
-
-
 class renderer_mesh_control:
     def __init__(self, filename_uv, texture_shape):
         self._mesh_a_vertices, self._mesh_b_vertices, self._mesh_a_faces, self._mesh_b_faces, self._mesh_a_uv, self._mesh_b_uv, self._uv_transform = texture_load_uv(filename_uv)
@@ -1746,13 +1751,14 @@ class renderer_mesh_control:
         if (u is None):
             target = np.zeros_like(texture)
             visual = texture_create_visual(self._mesh_b_uv, target)
-            effect = mesh_paint_single_pass(self._mesh_b_uvx, target, self._uv_transform, texture)
+            effect = mesh_paint_single_pass(self._mesh_b_uvx, target, self._uv_transform)
             effect.layer_create(0)
+            effect.layer_change(0, mesh_paint.LAYER_KIND_COLOR)
             effect.layer_enable(0, True)
             g[name] = [visual, effect]
         else:
             visual, effect = u
-            effect.set_background(texture)
+        effect.set_background(texture)
 
     def mesh_add_smpl(self, group, name, mesh, joints, texture, pose):
         self._tvfx_add(group, name, texture)
@@ -1839,6 +1845,10 @@ class renderer_mesh_control:
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
         effect.layer_enable(layer_id, enable)
 
+    def smpl_paint_layer_change(self, mesh_id, layer_id, layer_kind):
+        visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
+        effect.layer_change(layer_id, layer_kind)
+
     def smpl_paint_layer_clear(self, mesh_id, layer_id, color=0):
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
         effect.layer_clear(layer_id, color)
@@ -1877,13 +1887,13 @@ class renderer_mesh_control:
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         return mesh_align_prior(mesh_a, anchor.face_index, align_axis, align_axis_fallback, tolerance)
     
-    def smpl_paint_clear(self, mesh_id, enabled_only=False, color=0):
+    def smpl_paint_clear(self, mesh_id, color=0):
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
-        effect.clear(enabled_only, color)
+        effect.clear(color)
     
-    def smpl_paint_flush(self, mesh_id, force_alpha=None, stencil_layer=None):
+    def smpl_paint_flush(self, mesh_id, force_alpha=None):
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
-        effect.flush(force_alpha, stencil_layer)
+        effect.flush(force_alpha)
 
 
 #------------------------------------------------------------------------------
@@ -1996,6 +2006,9 @@ class renderer:
     
     def smpl_paint_layer_enable(self, mesh_id, layer_id, enable):
         self._mesh_control.smpl_paint_layer_enable(mesh_id, layer_id, enable)
+
+    def smpl_paint_layer_change(self, mesh_id, layer_id, layer_kind):
+        self._mesh_control.smpl_paint_layer_change(mesh_id, layer_id, layer_kind)
     
     def smpl_paint_layer_clear(self, mesh_id, layer_id, color=0):
         self._mesh_control.smpl_paint_layer_clear(mesh_id, layer_id, color)
@@ -2021,11 +2034,11 @@ class renderer:
     def smpl_paint_decal_align_prior(self, mesh_id, anchor, align_axis, align_axis_fallback, tolerance=0) -> mesh_paint_result:
         return self._mesh_control.smpl_paint_decal_align_prior(mesh_id, anchor, align_axis, align_axis_fallback, tolerance)
 
-    def smpl_paint_clear(self, mesh_id, enabled_only=False, color=0):
-        self._mesh_control.smpl_paint_clear(mesh_id, enabled_only, color=0)
+    def smpl_paint_clear(self, mesh_id, color=0):
+        self._mesh_control.smpl_paint_clear(mesh_id, color)
 
-    def smpl_paint_flush(self, mesh_id, force_alpha=None, stencil_layer=None):
-        self._mesh_control.smpl_paint_flush(mesh_id, force_alpha, stencil_layer)
+    def smpl_paint_flush(self, mesh_id, force_alpha=None):
+        self._mesh_control.smpl_paint_flush(mesh_id, force_alpha)
 
 
 
