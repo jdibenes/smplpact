@@ -721,6 +721,173 @@ def painter_create_decal(mesh_a, mesh_b, mesh_uvx, uv_transform, face_index, ori
     return mnp
 
 
+class mesh_paint_descriptor:
+    def __init__(self, resource_id, layer_id, task_id):
+        self.resource_id = resource_id
+        self.layer_id = layer_id
+        self.task_id = task_id
+
+
+class mesh_paint_result:
+    def __init__(self, done, status, data, layer_id):
+        self.done = done
+        self.status = status
+        self.data = data
+        self.layer_id = layer_id
+
+
+class mesh_paint:
+    def __init__(self, uvx, render_target, uv_transform, background):
+        self._uvx = uvx
+        self._render_target = render_target
+        self._uv_transform = uv_transform
+        self._background = background
+        self._layers = dict()
+        self._layer_enable = dict()
+        self._colors = dict()
+        self._textures = dict()
+        self._brushes = dict()
+        self._decals = dict()
+        self._tasks = dict()
+
+    def set_background(self, background):
+        self._background = background
+
+    def layer_create(self, layer_id):
+        self._layers[layer_id] = np.zeros_like(self._render_target)
+        self._layer_enable[layer_id] = False
+
+    def layer_enable(self, layer_id, enable):
+        self._layer_enable[layer_id] = enable
+
+    def layer_clear(self, layer_id, color=0):
+        self._layers[layer_id][:, :, :] = color
+
+    def layer_erase(self, layer_id, pixels, color=0):
+        self._layers[layer_id][pixels[:, 1], pixels[:, 0], :] = color
+
+    def layer_delete(self, layer_id):
+        self._layers.pop(layer_id)
+        self._layer_enable.pop(layer_id)
+
+    def texture_attach(self, texture_id, texture):
+        self._textures[texture_id] = texture
+
+    def texture_detach(self, texture_id):
+        self._textures.pop(texture_id)
+
+    def color_create_solid(self, color_id, color, stop_level, layer_id):
+        self._colors[color_id] = paint_color_solid(color, stop_level, self._layers[layer_id])
+
+    def color_delete(self, color_id):
+        self._colors.pop(color_id)
+
+    def brush_create_solid(self, brush_id, size, color, layer_id, fill_test=0.0):
+        self._brushes[brush_id] = paint_brush_solid(size, color, self._layers[layer_id], fill_test)
+
+    def brush_create_gradient(self, brush_id, size, color_center, color_edge, hardness, layer_id, fill_test=0.0):
+        self._brushes[brush_id] = paint_brush_gradient(size, color_center, color_edge, hardness, self._layers[layer_id], fill_test)
+
+    def brush_delete(self, brush_id):
+        self._brushes.pop(brush_id)
+
+    def decal_create_solid(self, decal_id, align_prior, angle, scale, texture_id, layer_id, double_cover_test=True, fill_test=0.0, tolerance=0):
+        self._decals[decal_id] = paint_decal_solid(align_prior, angle, scale, self._textures[texture_id], self._layers[layer_id], double_cover_test, fill_test, tolerance)
+
+    def decal_delete(self, decal_id):
+        self._decals.pop(decal_id)
+
+    def task_create_paint_color(self, task_id, mesh_a, mesh_b, face_index, origin, color_idx, tolerance=0, fixed=False):
+        o = self._colors[color_idx].paint
+        self._tasks[task_id] = painter_create_color(mesh_a, mesh_b, self._uvx, self._uv_transform, face_index, origin, o, tolerance, fixed)
+
+    def task_create_paint_brush(self, task_id, mesh_a, mesh_b, face_index, origin, brush_idx, tolerance=0):
+        o = self._brushes[brush_idx].paint
+        self._tasks[task_id] = painter_create_brush(mesh_a, mesh_b, self._uvx, self._uv_transform, face_index, origin, o, tolerance)
+        
+    def task_create_paint_decal(self, task_id, mesh_a, mesh_b, face_index, origin, decal_idx, tolerance=0):
+        o = self._decals[decal_idx].paint
+        self._tasks[task_id] = painter_create_decal(mesh_a, mesh_b, self._uvx, self._uv_transform, face_index, origin, o, tolerance)
+
+    def task_execute(self, task_id, timeout, steps=1):
+        return self._tasks[task_id].invoke_timeslice(timeout, steps)
+    
+    def task_status(self, task_id):
+        return self._tasks[task_id].status()
+
+    def task_done(self, task_id):
+        return self._tasks[task_id].done()
+    
+    def task_delete(self, task_id):
+        self._tasks.pop(task_id)
+
+    def clear(self, enabled_only=False, color=0):
+        for key in self._layers.keys():
+            if ((not enabled_only) or self._layer_enable[key]):
+                self.layer_clear(key, color)
+
+    def flush(self, force_alpha=None, stencil_layer=None):
+        self._render_target[:, :, :] = self._background
+        for key in sorted(self._layers.keys()):
+            if (self._layer_enable[key]):
+                self._render_target[:, :, :] = np.array(Image.alpha_composite(Image.fromarray(self._render_target), Image.fromarray(self._layers[key])))
+        if (force_alpha is not None):
+            self._render_target[:, :, 3] = force_alpha
+        if (stencil_layer is not None):
+            self._render_target[:, :, 3] = self._layers[stencil_layer][:, :, 3]
+
+
+class mesh_paint_single_pass(mesh_paint):
+    def __init__(self, uvx, render_target, uv_transform, background):
+        super().__init__(uvx, render_target, uv_transform, background)
+
+    def paint_color_solid(self, mesh_a, mesh_b, face_index, point, color, stop_level, tolerance=0, fixed=False, layer_id=0, timeout=0.05, steps=1):
+        d = mesh_paint_descriptor(0, layer_id, 0)
+        self.color_create_solid(d.resource_id, color, stop_level, d.layer_id)
+        self.task_create_paint_color(d.task_id, mesh_a, mesh_b, face_index, point, d.resource_id, tolerance, fixed)
+        data = self.task_execute(d.task_id, timeout, steps)
+        done = self.task_done(d.task_id)
+        status = self.task_status(d.task_id)
+        self.task_delete(d.task_id)
+        self.color_delete(d.resource_id)
+        return mesh_paint_result(done, status, data, layer_id)
+    
+    def paint_brush_solid(self, mesh_a, mesh_b, face_index, point, size, color, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1):
+        d = mesh_paint_descriptor(0, layer_id, 1)
+        self.brush_create_solid(d.resource_id, size, color, d.layer_id, fill_test)
+        self.task_create_paint_brush(d.task_id, mesh_a, mesh_b, face_index, point, d.resource_id, tolerance)
+        data = self.task_execute(d.task_id, timeout, steps)
+        done = self.task_done(d.task_id)
+        status = self.task_status(d.task_id)
+        self.task_delete(d.task_id)
+        self.brush_delete(d.resource_id)
+        return mesh_paint_result(done, status, data, layer_id)
+    
+    def paint_brush_gradient(self, mesh_a, mesh_b, face_index, point, size, color_center, color_edge, hardness, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1):
+        d = mesh_paint_descriptor(1, layer_id, 2)
+        self.brush_create_gradient(d.resource_id, size, color_center, color_edge, hardness, d.layer_id, fill_test)
+        self.task_create_paint_brush(d.task_id, mesh_a, mesh_b, face_index, point, d.resource_id, tolerance)
+        data = self.task_execute(d.task_id, timeout, steps)
+        done = self.task_done(d.task_id)
+        status = self.task_status(d.task_id)
+        self.task_delete(d.task_id)
+        self.brush_delete(d.resource_id)
+        return mesh_paint_result(done, status, data, layer_id)
+    
+    def paint_decal_solid(self, mesh_a, mesh_b, face_index, point, decal, align_prior, angle, scale, double_cover_test=True, fill_test=0.0, tolerance_decal=0, tolerance_paint=0, layer_id=0, timeout=0.05, steps=1):
+        d = mesh_paint_descriptor(0, layer_id, 3)
+        self.texture_attach(d.resource_id, decal)
+        self.decal_create_solid(d.resource_id, align_prior, angle, scale, d.resource_id, d.layer_id, double_cover_test, fill_test, tolerance_decal)
+        self.task_create_paint_decal(d.task_id, mesh_a, mesh_b, face_index, point, d.resource_id, tolerance_paint)
+        data = self.task_execute(d.task_id, timeout, steps)
+        done = self.task_done(d.task_id)
+        status = self.task_status(d.task_id)
+        self.task_delete(d.task_id)
+        self.decal_delete(d.resource_id)
+        self.texture_detach(d.resource_id)
+        return mesh_paint_result(done, status, data, layer_id)
+
+
 #------------------------------------------------------------------------------
 # Mesh Chart
 #------------------------------------------------------------------------------
@@ -1545,171 +1712,13 @@ class renderer_scene_control:
         self._groups.clear()
 
 
-class renderer_mesh_paint_descriptor:
-    def __init__(self, resource_id, layer_id, task_id):
-        self.resource_id = resource_id
-        self.layer_id = layer_id
-        self.task_id = task_id
 
 
-class renderer_mesh_paint_result:
-    def __init__(self, done, status, data, layer_id):
-        self.done = done
-        self.status = status
-        self.data = data
-        self.layer_id = layer_id        
 
 
-class renderer_mesh_paint:
-    def __init__(self, uvx, render_target, uv_transform, background):
-        self._uvx = uvx
-        self._render_target = render_target
-        self._uv_transform = uv_transform
-        self._background = background
-        self._layers = dict()
-        self._layer_enable = dict()
-        self._colors = dict()
-        self._textures = dict()
-        self._brushes = dict()
-        self._decals = dict()
-        self._tasks = dict()
-
-    def set_background(self, background):
-        self._background = background
-
-    def layer_create(self, layer_id):
-        self._layers[layer_id] = np.zeros_like(self._render_target)
-        self._layer_enable[layer_id] = False
-
-    def layer_enable(self, layer_id, enable):
-        self._layer_enable[layer_id] = enable
-
-    def layer_clear(self, layer_id, color=0):
-        self._layers[layer_id][:, :, :] = color
-
-    def layer_erase(self, layer_id, pixels, color=0):
-        self._layers[layer_id][pixels[:, 1], pixels[:, 0], :] = color
-
-    def layer_delete(self, layer_id):
-        self._layers.pop(layer_id)
-        self._layer_enable.pop(layer_id)
-
-    def texture_attach(self, texture_id, texture):
-        self._textures[texture_id] = texture
-
-    def texture_detach(self, texture_id):
-        self._textures.pop(texture_id)
-
-    def color_create_solid(self, color_id, color, stop_level, layer_id):
-        self._colors[color_id] = paint_color_solid(color, stop_level, self._layers[layer_id])
-
-    def color_delete(self, color_id):
-        self._colors.pop(color_id)
-
-    def brush_create_solid(self, brush_id, size, color, layer_id, fill_test=0.0):
-        self._brushes[brush_id] = paint_brush_solid(size, color, self._layers[layer_id], fill_test)
-
-    def brush_create_gradient(self, brush_id, size, color_center, color_edge, hardness, layer_id, fill_test=0.0):
-        self._brushes[brush_id] = paint_brush_gradient(size, color_center, color_edge, hardness, self._layers[layer_id], fill_test)
-
-    def brush_delete(self, brush_id):
-        self._brushes.pop(brush_id)
-
-    def decal_create_solid(self, decal_id, align_prior, angle, scale, texture_id, layer_id, double_cover_test=True, fill_test=0.0, tolerance=0):
-        self._decals[decal_id] = paint_decal_solid(align_prior, angle, scale, self._textures[texture_id], self._layers[layer_id], double_cover_test, fill_test, tolerance)
-
-    def decal_delete(self, decal_id):
-        self._decals.pop(decal_id)
-
-    def task_create_paint_color(self, task_id, mesh_a, mesh_b, face_index, origin, color_idx, tolerance=0, fixed=False):
-        o = self._colors[color_idx].paint
-        self._tasks[task_id] = painter_create_color(mesh_a, mesh_b, self._uvx, self._uv_transform, face_index, origin, o, tolerance, fixed)
-
-    def task_create_paint_brush(self, task_id, mesh_a, mesh_b, face_index, origin, brush_idx, tolerance=0):
-        o = self._brushes[brush_idx].paint
-        self._tasks[task_id] = painter_create_brush(mesh_a, mesh_b, self._uvx, self._uv_transform, face_index, origin, o, tolerance)
-        
-    def task_create_paint_decal(self, task_id, mesh_a, mesh_b, face_index, origin, decal_idx, tolerance=0):
-        o = self._decals[decal_idx].paint
-        self._tasks[task_id] = painter_create_decal(mesh_a, mesh_b, self._uvx, self._uv_transform, face_index, origin, o, tolerance)
-
-    def task_execute(self, task_id, timeout, steps=1):
-        return self._tasks[task_id].invoke_timeslice(timeout, steps)
-    
-    def task_status(self, task_id):
-        return self._tasks[task_id].status()
-
-    def task_done(self, task_id):
-        return self._tasks[task_id].done()
-    
-    def task_delete(self, task_id):
-        self._tasks.pop(task_id)
-
-    def clear(self, enabled_only=False, color=0):
-        for key in self._layers.keys():
-            if ((not enabled_only) or self._layer_enable[key]):
-                self.layer_clear(key, color)
-
-    def flush(self, force_alpha=None, stencil_layer=None):
-        self._render_target[:, :, :] = self._background
-        for key in sorted(self._layers.keys()):
-            if (self._layer_enable[key]):
-                self._render_target[:, :, :] = np.array(Image.alpha_composite(Image.fromarray(self._render_target), Image.fromarray(self._layers[key])))
-        if (force_alpha is not None):
-            self._render_target[:, :, 3] = force_alpha
-        if (stencil_layer is not None):
-            self._render_target[:, :, 3] = self._layers[stencil_layer][:, :, 3]
 
 
-class renderer_mesh_paint_single_pass(renderer_mesh_paint):
-    def __init__(self, uvx, render_target, uv_transform, background):
-        super().__init__(uvx, render_target, uv_transform, background)
 
-    def paint_color_solid(self, mesh_a, mesh_b, face_index, point, color, stop_level, tolerance=0, fixed=False, layer_id=0, timeout=0.05, steps=1):
-        d = renderer_mesh_paint_descriptor(0, layer_id, 0)
-        self.color_create_solid(d.resource_id, color, stop_level, d.layer_id)
-        self.task_create_paint_color(d.task_id, mesh_a, mesh_b, face_index, point, d.resource_id, tolerance, fixed)
-        data = self.task_execute(d.task_id, timeout, steps)
-        done = self.task_done(d.task_id)
-        status = self.task_status(d.task_id)
-        self.task_delete(d.task_id)
-        self.color_delete(d.resource_id)
-        return renderer_mesh_paint_result(done, status, data, layer_id)
-    
-    def paint_brush_solid(self, mesh_a, mesh_b, face_index, point, size, color, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1):
-        d = renderer_mesh_paint_descriptor(0, layer_id, 1)
-        self.brush_create_solid(d.resource_id, size, color, d.layer_id, fill_test)
-        self.task_create_paint_brush(d.task_id, mesh_a, mesh_b, face_index, point, d.resource_id, tolerance)
-        data = self.task_execute(d.task_id, timeout, steps)
-        done = self.task_done(d.task_id)
-        status = self.task_status(d.task_id)
-        self.task_delete(d.task_id)
-        self.brush_delete(d.resource_id)
-        return renderer_mesh_paint_result(done, status, data, layer_id)
-    
-    def paint_brush_gradient(self, mesh_a, mesh_b, face_index, point, size, color_center, color_edge, hardness, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1):
-        d = renderer_mesh_paint_descriptor(1, layer_id, 2)
-        self.brush_create_gradient(d.resource_id, size, color_center, color_edge, hardness, d.layer_id, fill_test)
-        self.task_create_paint_brush(d.task_id, mesh_a, mesh_b, face_index, point, d.resource_id, tolerance)
-        data = self.task_execute(d.task_id, timeout, steps)
-        done = self.task_done(d.task_id)
-        status = self.task_status(d.task_id)
-        self.task_delete(d.task_id)
-        self.brush_delete(d.resource_id)
-        return renderer_mesh_paint_result(done, status, data, layer_id)
-    
-    def paint_decal_solid(self, mesh_a, mesh_b, face_index, point, decal, align_prior, angle, scale, double_cover_test=True, fill_test=0.0, tolerance_decal=0, tolerance_paint=0, layer_id=0, timeout=0.05, steps=1):
-        d = renderer_mesh_paint_descriptor(0, layer_id, 3)
-        self.texture_attach(d.resource_id, decal)
-        self.decal_create_solid(d.resource_id, align_prior, angle, scale, d.resource_id, d.layer_id, double_cover_test, fill_test, tolerance_decal)
-        self.task_create_paint_decal(d.task_id, mesh_a, mesh_b, face_index, point, d.resource_id, tolerance_paint)
-        data = self.task_execute(d.task_id, timeout, steps)
-        done = self.task_done(d.task_id)
-        status = self.task_status(d.task_id)
-        self.task_delete(d.task_id)
-        self.decal_delete(d.resource_id)
-        self.texture_detach(d.resource_id)
-        return renderer_mesh_paint_result(done, status, data, layer_id)
 
 
 class renderer_mesh_control:
@@ -1737,7 +1746,7 @@ class renderer_mesh_control:
         if (u is None):
             target = np.zeros_like(texture)
             visual = texture_create_visual(self._mesh_b_uv, target)
-            effect = renderer_mesh_paint_single_pass(self._mesh_b_uvx, target, self._uv_transform, texture)
+            effect = mesh_paint_single_pass(self._mesh_b_uvx, target, self._uv_transform, texture)
             effect.layer_create(0)
             effect.layer_enable(0, True)
             g[name] = [visual, effect]
@@ -1997,19 +2006,19 @@ class renderer:
     def smpl_paint_layer_delete(self, mesh_id, layer_id):
         self._mesh_control.smpl_paint_layer_delete(mesh_id, layer_id)
     
-    def smpl_paint_color_solid(self, mesh_id, anchor, color, stop_level, tolerance=0, fixed=False, layer_id=0, timeout=0.05, steps=1) -> renderer_mesh_paint_result:
+    def smpl_paint_color_solid(self, mesh_id, anchor, color, stop_level, tolerance=0, fixed=False, layer_id=0, timeout=0.05, steps=1) -> mesh_paint_result:
         return self._mesh_control.smpl_paint_color_solid(mesh_id, anchor, color, stop_level, tolerance, fixed, layer_id, timeout, steps)
     
-    def smpl_paint_brush_solid(self, mesh_id, anchor, size, color, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1) -> renderer_mesh_paint_result:
+    def smpl_paint_brush_solid(self, mesh_id, anchor, size, color, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1) -> mesh_paint_result:
         return self._mesh_control.smpl_paint_brush_solid(mesh_id, anchor, size, color, fill_test, tolerance, layer_id, timeout, steps)
     
-    def smpl_paint_brush_gradient(self, mesh_id, anchor, size, color_center, color_edge, hardness, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1) -> renderer_mesh_paint_result:
+    def smpl_paint_brush_gradient(self, mesh_id, anchor, size, color_center, color_edge, hardness, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1) -> mesh_paint_result:
         return self._mesh_control.smpl_paint_brush_gradient(mesh_id, anchor, size, color_center, color_edge, hardness, fill_test, tolerance, layer_id, timeout, steps)
     
-    def smpl_paint_decal_solid(self, mesh_id, anchor, decal, align_prior, angle, scale, double_cover_test=True, fill_test=0.0, tolerance_decal=0, tolerance_paint=0, layer_id=0, timeout=0.05, steps=1) -> renderer_mesh_paint_result:
+    def smpl_paint_decal_solid(self, mesh_id, anchor, decal, align_prior, angle, scale, double_cover_test=True, fill_test=0.0, tolerance_decal=0, tolerance_paint=0, layer_id=0, timeout=0.05, steps=1) -> mesh_paint_result:
         return self._mesh_control.smpl_paint_decal_solid(mesh_id, anchor, decal, align_prior, angle, scale, double_cover_test, fill_test, tolerance_decal, tolerance_paint, layer_id, timeout, steps)
     
-    def smpl_paint_decal_align_prior(self, mesh_id, anchor, align_axis, align_axis_fallback, tolerance=0) -> renderer_mesh_paint_result:
+    def smpl_paint_decal_align_prior(self, mesh_id, anchor, align_axis, align_axis_fallback, tolerance=0) -> mesh_paint_result:
         return self._mesh_control.smpl_paint_decal_align_prior(mesh_id, anchor, align_axis, align_axis_fallback, tolerance)
 
     def smpl_paint_clear(self, mesh_id, enabled_only=False, color=0):
