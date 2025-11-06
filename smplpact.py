@@ -335,6 +335,13 @@ def mesh_select_complete_faces(mesh, vertex_indices):
     return (face_indices_complete, vertex_indices_complete) # tuple return
 
 
+class mesh_split:
+    def __init__(self, faces_p, keep_n, keep_p):
+        self.faces_p = faces_p
+        self.keep_n = keep_n
+        self.keep_p = keep_p
+
+
 # TODO: this is slow
 def mesh_to_renderer(mesh, split=None):
     m = pyrender.Mesh.from_trimesh(mesh)
@@ -353,13 +360,7 @@ def mesh_to_renderer(mesh, split=None):
     mode = primitive.mode
     poses = primitive.poses
 
-    indices_a = np.delete(indices, split, 0)
-    indices_b = indices[split, :]
-
-    pa = pyrender.Primitive(positions=positions, normals=normals, texcoord_0=texcoord_0, color_0=color_0, indices=indices_a, material=material, mode=mode, poses=poses)
-    pb = pyrender.Primitive(positions=positions, normals=normals, texcoord_0=texcoord_0, color_0=color_0, indices=indices_b, material=material, mode=mode, poses=poses)
-
-    return pyrender.Mesh(primitives=[pa, pb])
+    return pyrender.Mesh(primitives=[pyrender.Primitive(positions=positions, normals=normals, texcoord_0=texcoord_0, color_0=color_0, indices=select, material=material, mode=mode, poses=poses) for select, keep in [(np.delete(indices, split.faces_p, 0), split.keep_n), (indices[split.faces_p, :], split.keep_p)] if keep])
 
 
 class mesh_neighborhood_builder:
