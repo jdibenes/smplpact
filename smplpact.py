@@ -1028,8 +1028,7 @@ def smpl_camera_align_It(K_smpl, K_dst, points_world):
 def smpl_camera_align_Rt(K_smpl, K_dst, points_world):
     u = np.ascontiguousarray(((points_world / points_world[:, 2:3]) @ K_smpl)[:, 0:2])
     ok, r, t = cv2.solvePnP(points_world, u, K_dst.T, None, flags=cv2.SOLVEPNP_SQPNP)
-    R = cv2.Rodrigues(r)[0]
-    return (R.T, t.T) # tuple return
+    return (cv2.Rodrigues(r)[0].T, t.T) if (ok) else smpl_camera_align_It(K_smpl, K_dst, points_world) # tuple return
 
 
 def smpl_camera_align_dz(K_smpl, K_dst, points_world):
@@ -2048,3 +2047,4 @@ def project_points(world_points, K):
     camera_points = world_points @ K
     camera_points = camera_points[:, 0:2] / camera_points[:, 2:3]
     return camera_points
+
