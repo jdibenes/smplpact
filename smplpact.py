@@ -1359,12 +1359,12 @@ class smpl_model_result:
 
 
 class smpl_model:
-    _SMPL_TO_OPENPOSE = [24, 12, 17, 19, 21, 16, 18, 20, 0, 2, 5, 8, 1, 4, 7, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34]
+    SMPL_TO_OPENPOSE = [24, 12, 17, 19, 21, 16, 18, 20, 0, 2, 5, 8, 1, 4, 7, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34]
 
     def __init__(self, model_path, num_betas, device):
         self._device = device
         self._smpl_model = smplx.SMPLLayer(model_path=model_path, num_betas=num_betas).to(device)
-        self._smpl_to_open_pose = torch.tensor(smpl_model._SMPL_TO_OPENPOSE, dtype=torch.long, device=device)
+        self._smpl_to_open_pose = torch.tensor(smpl_model.SMPL_TO_OPENPOSE, dtype=torch.long, device=device)
 
     def to_mesh(self, smpl_params, openpose_joints=True):
         smpl_output = self._smpl_model(**smpl_params)
@@ -1373,29 +1373,26 @@ class smpl_model:
         return smpl_model_result(vertices.cpu().numpy(), self._smpl_model.faces, joints.cpu().numpy())
     
 
+# TODO: Multiple meshes
 class smpl_model_filtered(smpl_model):
     def __init__(self, model_path, num_betas, device):
         super().__init__(model_path, num_betas, device)
 
     def reset(self):
-        self._loaded = False
+        self._state = 0
 
-    def configure(self, bounding_box=None, orientation=None, weight=None):
-        if (weight is not None):
-            self._weight = torch.scalar_tensor(weight, dtype=torch.float32, device=self._device)
-        if (bounding_box is not None):
-            self._bounding_box = bounding_box
-        if (orientation is not None):
-            self._orientation = orientation
+    def set_filter_bounding_box(self, K, x0y0x1y1, joints, weights, threshold):
+        self._bb_K = K
+        self._bb_x0y0x1y1 = x0y0x1y1
+        self._bb_joints = joints
+        self._bb_weights = weights
+        self._bb_threshold = threshold
 
+    def set_filter_forward_face(self, threshold):
+        self._ff_threshold = threshold
 
-
-
-
-
-        
-
-
+    def set_filter_exponential_average(self, weight):
+        self._ef_weight = torch.scalar_tensor(weight, dtype=torch.float32, device=self._device) if (weight is not None) else None
 
     def to_mesh(self, smpl_params, openpose_joints=True):
         global_orient = smpl_params['global_orient'][0:1] # n, 1, 3, 3
@@ -1403,69 +1400,60 @@ class smpl_model_filtered(smpl_model):
         betas = smpl_params['betas'][0:1] # n 10
         transl = smpl_params['transl'][0:1] # n 3
 
-        #mesh = super().to_mesh(smpl_params)
+        if ((self._bb_threshold is not None) or (self._ff_threshold is not None)):
+            mesh = super().to_mesh(smpl_params, True)
+            mesh_joints = mesh.joints[0]
 
+        if (self._bb_threshold is not None):
+            x0 = self._bb_x0y0x1y1[0]
+            y0 = self._bb_x0y0x1y1[1]
+            x1 = self._bb_x0y0x1y1[2]
+            y1 = self._bb_x0y0x1y1[3]
 
-        
-        
-
-        
-        j = [smpl_joints_openpose.MidHip,
-             smpl_joints_openpose.LHip,
-             smpl_joints_openpose.RHip,
-             smpl_joints_openpose.LShoulder,
-             smpl_joints_openpose.RShoulder]
-
-        #mesh.joints[]
-
-
-
-
-
-                    # BOUNDING BOX
-    # CHEST ORIENTATION WRT CAMERA
-
-        if (not self._l):
-            self._g = global_orient
-            self._p = body_pose
-            self._b = betas
-            self._t = transl
-            self._l = True
-            self._prev_p = body_pose
-            #self._dg = 0.5
-            #print(self._g.shape)
-            #print(self._p.shape)
-            #print(self._t.shape)
-            #print(self._b.shape)
-            #print('END DEF')
-        else:
-            dg = torch.min((np.pi - roma.rotmat_geodesic_distance(self._prev_p, body_pose)) / np.pi)
-            dg = dg * dg
-            self._prev_p = body_pose
-            #print(global_orient.shape)
-            #print(body_pose.shape)
-            #print(transl.shape)
-            #print(betas.shape)
-            #self._dg = self._dg + self._alpha * ( - self._dg)
+            js = mesh_joints[self._bb_joints, :]
+            jp = (js / js[:, 2:3]) @ self._bb_K
+            jx = jp[:, 0]
+            jy = jp[:, 1]
+            jw = np.dot((jx >= x0) & (jy >= y0) & (jx < x1) & (jy < y1), self._bb_weights)
             
-            #print(dg)
+            keep_bb = jw >= self._bb_threshold
+        else:
+            keep_bb = True
 
+        if (self._ff_threshold is not None):
+            jmh = mesh_joints[np.newaxis, smpl_joints_openpose.MidHip, :]
+            jlh = mesh_joints[np.newaxis, smpl_joints_openpose.LHip, :]
+            jrh = mesh_joints[np.newaxis, smpl_joints_openpose.RHip, :]
 
+            hfv = math_normalize(np.cross(jrh - jmh, jlh - jmh))[0]
+            hca = np.degrees(np.arccos(np.clip(-hfv[0, 2], -1, 1)))
 
+            keep_ff = hca <= self._ff_threshold
+        else:
+            keep_ff = True
 
+        ok = keep_bb and keep_ff
 
-
-
-            self._g = roma.rotmat_slerp(self._g, global_orient, self._alpha)
-            self._p = roma.rotmat_slerp(self._p, body_pose, dg * self._alpha) #self._alpha)
-            print(self._p.shape)
-            self._t = self._t + self._alpha * (transl - self._t)
-            self._b = self._b + self._alpha * (betas - self._b) # linear??
-            #print(self._g.shape)
-            #print(self._p.shape)
-            #print(self._t.shape)
-            #print(self._b.shape)
-
+        if (not ok):
+            if (self._state > 0):
+                global_orient = self._g
+                body_pose = self._p
+                betas = self._b
+                transl = self._t
+            else:
+                return (False, None)
+        else:
+            if ((self._state <= 0) or (self._ef_weight is None)):
+                self._g = global_orient
+                self._p = body_pose
+                self._b = betas
+                self._t = transl
+                self._state = 1
+            else:
+                self._g = roma.rotmat_slerp(self._g, global_orient, self._ef_weight)
+                self._p = roma.rotmat_slerp(self._p, body_pose, self._ef_weight)
+                self._t = self._t + self._ef_weight * (transl - self._t)
+                self._b = self._b + self._ef_weight * (betas - self._b)
 
         smpl_params['global_orient'] = self._g
         smpl_params['body_pose'] = self._p
@@ -1809,7 +1797,6 @@ class renderer_mesh_control:
             visual = texture_create_visual(self._mesh_b_uv, target)
             effect = mesh_paint_single_pass(self._mesh_b_uvx, target, self._uv_transform)
             effect.layer_create(0)
-            effect.layer_change(0, mesh_paint.LAYER_KIND_COLOR)
             effect.layer_enable(0, True)
             g[name] = [visual, effect]
         else:
@@ -1966,8 +1953,20 @@ class renderer:
     def smpl_load_uv(self, filename_uv, texture_shape):
         self._mesh_control = renderer_mesh_control(filename_uv, texture_shape)
 
-    def smpl_get_mesh(self, smpl_params) -> smpl_model_result:
-        return self._smpl_control.to_mesh(smpl_params)
+    def smpl_filter_reset(self):
+        self._smpl_control.reset()
+
+    def smpl_filter_set_bounding_box(self, K, x0y0x1y1, joints, weights, threshold_sum):
+        self._smpl_control.set_filter_bounding_box(K, x0y0x1y1, joints, weights, threshold_sum)
+
+    def smpl_filter_set_forward_face(self, threshold_degrees):
+        self._smpl_control.set_filter_forward_face(threshold_degrees)
+
+    def smpl_filter_set_exponential_average(self, weight):
+        self._smpl_control.set_filter_exponential_average(weight)    
+
+    def smpl_get_mesh(self, smpl_params, openpose_joints=True) -> smpl_model_result:
+        return self._smpl_control.to_mesh(smpl_params, openpose_joints)
 
     def camera_get_pose(self):
         return self._scene_control.camera_get_pose()
