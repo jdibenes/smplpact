@@ -18,6 +18,7 @@ Python library for SMPL Model Texture Painting.
     - chumpy
     - rtree
     - embreex
+    - roma
 
 2. Download demo data from [[here]](https://stevens0-my.sharepoint.com/:u:/g/personal/jdibenes_stevens_edu/EVadG40Vl55LrrBOOEgR3QwBMa2V1Yj8xon_6uCwUPVs2Q?e=dwn0fd) (~1.51 MB).
 
