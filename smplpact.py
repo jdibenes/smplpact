@@ -1373,59 +1373,10 @@ class smpl_model:
 
 
 #------------------------------------------------------------------------------
-# Rendering Components
+# Camera
 #------------------------------------------------------------------------------
 
-def renderer_create_settings_offscreen(width, height, point_size=1):
-    s = dict()
-    s['viewport_width'] = width
-    s['viewport_height'] = height
-    s['point_size'] = point_size
-    return s
-
-
-def renderer_create_settings_scene(bg_color=(1.0, 1.0, 1.0, 1.0), ambient_light=(0.0, 0.0, 0.0), name='scene'):
-    s = dict()
-    s['bg_color'] = bg_color
-    s['ambient_light'] = ambient_light
-    s['name'] = name
-    return s
-
-
-def renderer_create_settings_camera(fx, fy, cx, cy, znear=0.05, zfar=100, name='camera'):
-    s = dict()
-    s['fx'] = fx
-    s['fy'] = fy
-    s['cx'] = cx
-    s['cy'] = cy
-    s['znear'] = znear
-    s['zfar'] = zfar
-    s['name'] = name
-    return s
-
-
-def renderer_create_settings_lamp(color=(1.0, 1.0, 1.0), intensity=3.0, name='lamp'):
-    s = dict()
-    s['color'] = color
-    s['intensity'] = intensity
-    s['name'] = name
-    return s
-
-
-def renderer_create_settings_camera_transform(center=(0, 0, 0), yaw=0, pitch=0, distance=1, min_pitch=-75, max_pitch=75, znear=0.05, zfar=100):
-    s = dict()
-    s['center'] = np.array(center, np.float32)
-    s['yaw'] = yaw
-    s['pitch'] = pitch
-    s['distance'] = distance
-    s['min_pitch'] = min_pitch
-    s['max_pitch'] = max_pitch
-    s['znear'] = znear
-    s['zfar'] = zfar
-    return s
-
-
-class renderer_camera_transform_parameters:
+class camera_transform_parameters:
     def __init__(self, yaw, pitch, distance, center, tc, ry, rx, tz):
         self.yaw = yaw
         self.pitch = pitch
@@ -1437,7 +1388,7 @@ class renderer_camera_transform_parameters:
         self.tz = tz
 
 
-class renderer_camera_transform:
+class camera_transform:
     def __init__(self, center, yaw, pitch, distance, min_pitch, max_pitch, znear, zfar):
         self._min_pitch = min_pitch
         self._max_pitch = max_pitch
@@ -1532,7 +1483,7 @@ class renderer_camera_transform:
         return self._tz
     
     def get_parameters(self):
-        return renderer_camera_transform_parameters(self._yaw, self._pitch, self._distance, self._center, self._tc, self._ry, self._rx, self._tz)
+        return camera_transform_parameters(self._yaw, self._pitch, self._distance, self._center, self._tc, self._ry, self._rx, self._tz)
 
     def _update(self):
         if (self._dirty):
@@ -1559,6 +1510,59 @@ class renderer_camera_transform:
         self.update_center(center)
 
 
+#------------------------------------------------------------------------------
+# Rendering Components
+#------------------------------------------------------------------------------
+
+def renderer_create_settings_offscreen(width, height, point_size=1):
+    s = dict()
+    s['viewport_width'] = width
+    s['viewport_height'] = height
+    s['point_size'] = point_size
+    return s
+
+
+def renderer_create_settings_scene(bg_color=(1.0, 1.0, 1.0, 1.0), ambient_light=(0.0, 0.0, 0.0), name='scene'):
+    s = dict()
+    s['bg_color'] = bg_color
+    s['ambient_light'] = ambient_light
+    s['name'] = name
+    return s
+
+
+def renderer_create_settings_camera(fx, fy, cx, cy, znear=0.05, zfar=100, name='camera'):
+    s = dict()
+    s['fx'] = fx
+    s['fy'] = fy
+    s['cx'] = cx
+    s['cy'] = cy
+    s['znear'] = znear
+    s['zfar'] = zfar
+    s['name'] = name
+    return s
+
+
+def renderer_create_settings_lamp(color=(1.0, 1.0, 1.0), intensity=3.0, name='lamp'):
+    s = dict()
+    s['color'] = color
+    s['intensity'] = intensity
+    s['name'] = name
+    return s
+
+
+def renderer_create_settings_camera_transform(center=(0, 0, 0), yaw=0, pitch=0, distance=1, min_pitch=-75, max_pitch=75, znear=0.05, zfar=100):
+    s = dict()
+    s['center'] = np.array(center, np.float32)
+    s['yaw'] = yaw
+    s['pitch'] = pitch
+    s['distance'] = distance
+    s['min_pitch'] = min_pitch
+    s['max_pitch'] = max_pitch
+    s['znear'] = znear
+    s['zfar'] = zfar
+    return s
+
+
 class renderer_mesh_identifier:
     def __init__(self, group, name, kind):
         self.group = group
@@ -1571,7 +1575,7 @@ class renderer_scene_control:
         self._renderer = pyrender.OffscreenRenderer(**settings_offscreen)
         self._scene = pyrender.Scene(**settings_scene)
         self._camera = pyrender.IntrinsicsCamera(**settings_camera)
-        self._camera_transform = renderer_camera_transform(**settings_camera_transform)
+        self._camera_transform = camera_transform(**settings_camera_transform)
         self._light = pyrender.DirectionalLight(**settings_lamp)
         self._groups = dict()
         self._camera_pose = self._camera_transform.get_transform_local()
@@ -1997,7 +2001,7 @@ class renderer:
     def camera_get_transform_plane(self):
         return self._scene_control.camera_get_transform_plane()   
     
-    def camera_get_parameters(self) -> renderer_camera_transform_parameters:
+    def camera_get_parameters(self) -> camera_transform_parameters:
         return self._scene_control.camera_get_parameters()
 
     def camera_adjust_parameters(self, yaw=None, pitch=None, distance=None, center=None, relative=True):
