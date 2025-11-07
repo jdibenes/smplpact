@@ -1945,9 +1945,9 @@ class renderer_smpl_control:
         mesh = self._smpl_model.to_mesh(smpl_params, openpose_joints)
 
         if (move_sm):
-            smpl_R, smpl_t = align_mode(K_smpl, K_dst, mesh.joints[0])
-            mesh.joints = np.expand_dims(mesh.joints[0] @ smpl_R + smpl_t, axis=0)
-            mesh.vertices = np.expand_dims(mesh.vertices[0] @ smpl_R + smpl_t, axis=0)
+            R, t = align_mode(K_smpl, K_dst, mesh.joints[0])
+            mesh.joints = np.expand_dims((mesh.joints[0] @ R) + t, axis=0)
+            mesh.vertices = np.expand_dims((mesh.vertices[0] @ R) + t, axis=0)
 
         return (ok, mesh)
 
