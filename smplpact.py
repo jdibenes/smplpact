@@ -1362,7 +1362,6 @@ class smpl_model:
     SMPL_TO_OPENPOSE = [24, 12, 17, 19, 21, 16, 18, 20, 0, 2, 5, 8, 1, 4, 7, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34]
 
     def __init__(self, model_path, num_betas, device):
-        self._device = device
         self._smpl_model = smplx.SMPLLayer(model_path=model_path, num_betas=num_betas).to(device)
         self._smpl_to_open_pose = torch.tensor(smpl_model.SMPL_TO_OPENPOSE, dtype=torch.long, device=device)
 
@@ -1371,96 +1370,6 @@ class smpl_model:
         vertices = smpl_output.vertices
         joints = smpl_output.joints.index_select(1, self._smpl_to_open_pose) if (openpose_joints) else smpl_output.joints
         return smpl_model_result(vertices.cpu().numpy(), self._smpl_model.faces, joints.cpu().numpy())
-    
-
-# TODO: Multiple meshes
-class smpl_model_filtered(smpl_model):
-    def __init__(self, model_path, num_betas, device):
-        super().__init__(model_path, num_betas, device)
-
-    def reset(self):
-        self._state = 0
-
-    def set_filter_bounding_box(self, K, x0y0x1y1, joints, weights, threshold):
-        self._bb_K = K
-        self._bb_x0y0x1y1 = x0y0x1y1
-        self._bb_joints = joints
-        self._bb_weights = weights
-        self._bb_threshold = threshold
-
-    def set_filter_forward_face(self, threshold):
-        self._ff_threshold = threshold
-
-    def set_filter_exponential_average(self, weight):
-        self._ef_weight = torch.scalar_tensor(weight, dtype=torch.float32, device=self._device) if (weight is not None) else None
-
-    def to_mesh(self, smpl_params, openpose_joints=True):
-        global_orient = smpl_params['global_orient'][0:1] # n, 1, 3, 3
-        body_pose = smpl_params['body_pose'][0:1] # n 23 3 3
-        betas = smpl_params['betas'][0:1] # n 10
-        transl = smpl_params['transl'][0:1] # n 3
-
-        if ((self._bb_threshold is not None) or (self._ff_threshold is not None)):
-            mesh = super().to_mesh(smpl_params, True)
-            mesh_joints = mesh.joints[0]
-
-        if (self._bb_threshold is not None):
-            x0 = self._bb_x0y0x1y1[0]
-            y0 = self._bb_x0y0x1y1[1]
-            x1 = self._bb_x0y0x1y1[2]
-            y1 = self._bb_x0y0x1y1[3]
-
-            js = mesh_joints[self._bb_joints, :]
-            jp = (js / js[:, 2:3]) @ self._bb_K
-            jx = jp[:, 0]
-            jy = jp[:, 1]
-            jw = np.dot((jx >= x0) & (jy >= y0) & (jx < x1) & (jy < y1), self._bb_weights)
-            
-            keep_bb = jw >= self._bb_threshold
-        else:
-            keep_bb = True
-
-        if (self._ff_threshold is not None):
-            jmh = mesh_joints[np.newaxis, smpl_joints_openpose.MidHip, :]
-            jlh = mesh_joints[np.newaxis, smpl_joints_openpose.LHip, :]
-            jrh = mesh_joints[np.newaxis, smpl_joints_openpose.RHip, :]
-
-            hfv = math_normalize(np.cross(jrh - jmh, jlh - jmh))[0]
-            hca = np.degrees(np.arccos(np.clip(-hfv[0, 2], -1, 1)))
-
-            keep_ff = hca <= self._ff_threshold
-        else:
-            keep_ff = True
-
-        ok = keep_bb and keep_ff
-
-        if (not ok):
-            if (self._state > 0):
-                global_orient = self._g
-                body_pose = self._p
-                betas = self._b
-                transl = self._t
-            else:
-                return (False, None)
-        else:
-            if ((self._state <= 0) or (self._ef_weight is None)):
-                self._g = global_orient
-                self._p = body_pose
-                self._b = betas
-                self._t = transl
-                self._state = 1
-            else:
-                self._g = roma.rotmat_slerp(self._g, global_orient, self._ef_weight)
-                self._p = roma.rotmat_slerp(self._p, body_pose, self._ef_weight)
-                self._t = self._t + self._ef_weight * (transl - self._t)
-                self._b = self._b + self._ef_weight * (betas - self._b)
-
-        smpl_params['global_orient'] = self._g
-        smpl_params['body_pose'] = self._p
-        smpl_params['betas'] = self._b
-        smpl_params['transl'] = self._t
-
-        return super().to_mesh(smpl_params, openpose_joints)
 
 
 #------------------------------------------------------------------------------
@@ -1939,6 +1848,110 @@ class renderer_mesh_control:
         effect.flush(force_alpha)
 
 
+# TODO: Multiple meshes
+class renderer_smpl_control:
+    def __init__(self, model_path, num_betas, device):
+        self._smpl_model = smpl_model(model_path, num_betas, device)
+        self._device = device
+
+    def filter_reset(self):
+        self._state = 0
+
+    def filter_set_bounding_box(self, x0y0x1y1, joints, weights, threshold):
+        self._bb_x0y0x1y1 = x0y0x1y1
+        self._bb_joints = joints
+        self._bb_weights = weights
+        self._bb_threshold = threshold
+
+    def filter_set_forward_face(self, threshold):
+        self._ff_threshold = threshold
+
+    def filter_set_exponential_single(self, weight):
+        self._ef_weight = torch.scalar_tensor(weight, dtype=torch.float32, device=self._device) if (weight is not None) else None
+
+    def _test_bb(self, mesh_joints, K_smpl):
+        x0 = self._bb_x0y0x1y1[0]
+        y0 = self._bb_x0y0x1y1[1]
+        x1 = self._bb_x0y0x1y1[2]
+        y1 = self._bb_x0y0x1y1[3]
+
+        js = mesh_joints[self._bb_joints, :]
+        jp = (js / js[:, 2:3]) @ K_smpl
+        jx = jp[:, 0]
+        jy = jp[:, 1]
+        jw = np.dot((jx >= x0) & (jy >= y0) & (jx < x1) & (jy < y1), self._bb_weights)
+
+        return jw >= self._bb_threshold
+    
+    def _test_ff(self, mesh_joints):
+        jmh = mesh_joints[np.newaxis, smpl_joints_openpose.MidHip, :]
+        jlh = mesh_joints[np.newaxis, smpl_joints_openpose.LHip, :]
+        jrh = mesh_joints[np.newaxis, smpl_joints_openpose.RHip, :]
+
+        hfv = math_normalize(np.cross(jrh - jmh, jlh - jmh))[0]
+        hca = np.degrees(np.arccos(np.clip(-hfv[0, 2], -1, 1)))
+
+        return hca <= self._ff_threshold
+    
+    def _reset_fes(self, global_orient, body_pose, betas, transl):
+        self._g = global_orient
+        self._p = body_pose
+        self._b = betas
+        self._t = transl
+        self._state = 1
+
+    def _apply_fes(self, global_orient, body_pose, betas, transl):
+        self._g = roma.rotmat_slerp(self._g, global_orient, self._ef_weight)
+        self._p = roma.rotmat_slerp(self._p, body_pose, self._ef_weight)
+        self._b = self._b + self._ef_weight * (betas - self._b)
+        self._t = self._t + self._ef_weight * (transl - self._t)
+        self._state = 2
+
+    def to_mesh(self, smpl_params, K_smpl, K_dst, align_mode=smpl_camera_align_Rt, openpose_joints=True, smpl_index=0):
+        test_bb = self._bb_threshold is not None
+        test_ff = self._ff_threshold is not None
+        skip_ef = self._ef_weight is None
+        move_sm = K_dst is not None
+
+        if (test_bb or test_ff):
+            mesh = self._smpl_model.to_mesh(smpl_params, True)
+            mesh_joints = mesh.joints[smpl_index]
+
+        keep_bb = (not test_bb) or self._test_bb(mesh_joints, K_smpl)
+        keep_ff = (not test_ff) or self._test_ff(mesh_joints)
+
+        ok = keep_bb and keep_ff
+        ud = self._state <= 0
+
+        if (ok):
+            global_orient = smpl_params['global_orient'][torch.newaxis, smpl_index]
+            body_pose = smpl_params['body_pose'][torch.newaxis, smpl_index]
+            betas = smpl_params['betas'][torch.newaxis, smpl_index]
+            transl = smpl_params['transl'][torch.newaxis, smpl_index]
+
+            if (ud or skip_ef):
+                self._reset_fes(global_orient, body_pose, betas, transl)
+            else:
+                self._apply_fes(global_orient, body_pose, betas, transl)
+        else:
+            if (ud):
+                return (False, None)
+        
+        smpl_params['global_orient'] = self._g
+        smpl_params['body_pose'] = self._p
+        smpl_params['betas'] = self._b
+        smpl_params['transl'] = self._t
+
+        mesh = self._smpl_model.to_mesh(smpl_params, openpose_joints)
+
+        if (move_sm):
+            smpl_R, smpl_t = align_mode(K_smpl, K_dst, mesh.joints[0])
+            mesh.joints = np.expand_dims(mesh.joints[0] @ smpl_R + smpl_t, axis=0)
+            mesh.vertices = np.expand_dims(mesh.vertices[0] @ smpl_R + smpl_t, axis=0)
+
+        return (ok, mesh)
+
+
 #------------------------------------------------------------------------------
 # Renderer
 #------------------------------------------------------------------------------
@@ -1948,25 +1961,25 @@ class renderer:
         self._scene_control = renderer_scene_control(settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp)
 
     def smpl_load_model(self, model_path, num_betas, device):
-        self._smpl_control = smpl_model_filtered(model_path, num_betas, device)
+        self._smpl_control = renderer_smpl_control(model_path, num_betas, device)
     
     def smpl_load_uv(self, filename_uv, texture_shape):
         self._mesh_control = renderer_mesh_control(filename_uv, texture_shape)
 
     def smpl_filter_reset(self):
-        self._smpl_control.reset()
+        self._smpl_control.filter_reset()
 
-    def smpl_filter_set_bounding_box(self, K, x0y0x1y1, joints, weights, threshold_sum):
-        self._smpl_control.set_filter_bounding_box(K, x0y0x1y1, joints, weights, threshold_sum)
+    def smpl_filter_set_bounding_box(self, x0y0x1y1, joints, weights, threshold_sum):
+        self._smpl_control.filter_set_bounding_box(x0y0x1y1, joints, weights, threshold_sum)
 
     def smpl_filter_set_forward_face(self, threshold_degrees):
-        self._smpl_control.set_filter_forward_face(threshold_degrees)
+        self._smpl_control.filter_set_forward_face(threshold_degrees)
 
-    def smpl_filter_set_exponential_average(self, weight):
-        self._smpl_control.set_filter_exponential_average(weight)    
+    def smpl_filter_set_exponential_single(self, weight):
+        self._smpl_control.filter_set_exponential_single(weight)
 
-    def smpl_get_mesh(self, smpl_params, openpose_joints=True) -> smpl_model_result:
-        return self._smpl_control.to_mesh(smpl_params, openpose_joints)
+    def smpl_get_mesh(self, smpl_params, K_smpl, K_dst, align_mode=smpl_camera_align_Rt, openpose_joints=True, smpl_index=0) -> smpl_model_result:
+        return self._smpl_control.to_mesh(smpl_params, K_smpl, K_dst, align_mode, openpose_joints, smpl_index)
 
     def camera_get_pose(self):
         return self._scene_control.camera_get_pose()
@@ -2100,15 +2113,4 @@ class renderer:
 
     def smpl_paint_flush(self, mesh_id, force_alpha=None):
         self._mesh_control.smpl_paint_flush(mesh_id, force_alpha)
-
-
-
-
-
-def project_points(world_points, K):
-    camera_points = world_points @ K
-    camera_points = camera_points[:, 0:2] / camera_points[:, 2:3]
-    return camera_points
-
-
 
