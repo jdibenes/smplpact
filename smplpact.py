@@ -1962,6 +1962,10 @@ class renderer:
 
     def smpl_load_model(self, model_path, num_betas, device):
         self._smpl_control = renderer_smpl_control(model_path, num_betas, device)
+        self._smpl_control.filter_reset()
+        self._smpl_control.filter_set_bounding_box(None, None, None, None)
+        self._smpl_control.filter_set_forward_face(None)
+        self._smpl_control.filter_set_exponential_single(None)
     
     def smpl_load_uv(self, filename_uv, texture_shape):
         self._mesh_control = renderer_mesh_control(filename_uv, texture_shape)
