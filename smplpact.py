@@ -2034,12 +2034,6 @@ class renderer:
         item = mesh_to_renderer(mesh, split)
         self._scene_control.group_item_add(mesh_id.group, mesh_id.name, item, pose)
 
-    def mesh_present_smpl(self, mesh_id, split=None):
-        self.mesh_present(mesh_id, split)
-
-    def mesh_present_user(self, mesh_id):
-        self.mesh_present(mesh_id)
-
     def mesh_remove_item(self, mesh_id):
         self._mesh_control.mesh_remove_item(mesh_id)
         self._scene_control.group_item_remove(mesh_id)
