@@ -1928,10 +1928,10 @@ class renderer_smpl_control:
         ud = self._state <= 0
 
         if (ok):
-            global_orient = smpl_params['global_orient'][torch.newaxis, smpl_index]
-            body_pose = smpl_params['body_pose'][torch.newaxis, smpl_index]
-            betas = smpl_params['betas'][torch.newaxis, smpl_index]
-            transl = smpl_params['transl'][torch.newaxis, smpl_index]
+            global_orient = smpl_params['global_orient'][None, smpl_index]
+            body_pose = smpl_params['body_pose'][None, smpl_index]
+            betas = smpl_params['betas'][None, smpl_index]
+            transl = smpl_params['transl'][None, smpl_index]
 
             if (ud or skip_ef):
                 self._reset_fes(global_orient, body_pose, betas, transl)
