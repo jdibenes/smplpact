@@ -212,6 +212,12 @@ class demo:
         # Show rendered image
         cv2.imshow('SMPL Paint Demo', cv2.cvtColor(color, cv2.COLOR_RGB2BGR))
 
+        # Draw smpl vertices
+        #joints_image = (smpl_vertices/smpl_vertices[:,2:3]) @ self._K.T
+        #for i in range(0, joints_image.shape[0]):
+        #    center = (int(joints_image[i, 0]), int(joints_image[i, 1]))
+        #    cv2.circle(self._test_image, center, 5, (0, 255, 0), -1)
+
         # Draw probe
         probe_image = (probe_position/probe_position[:, 2:3]) @ self._K.T
         center = (int(probe_image[0, 0]), int(probe_image[0, 1]))
