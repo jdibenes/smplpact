@@ -33,6 +33,7 @@ class demo:
         self._smpl_uv_path = './data/smpl_uv.obj'
         self._smpl_texture_path = './data/textures/f_01_alb.002_1k.png'
         self._smpl_face_segmentation_path = './data/smpl_face_segmentation.json'
+        self._smpl_dataset_path = 'C:/Users/jcds/Desktop/data_dump'
         self._smpl_texture_load_alpha = False
         
         self._viewport_width = 1280
@@ -95,7 +96,7 @@ class demo:
         with open(self._smpl_face_segmentation_path, 'rt') as segmentation_file:
             self._smpl_segementation = json.load(segmentation_file)
 
-        files, folders = smplpact.scan_path('C:/Users/jcds/Desktop/data_dump', folders_sort=True, folders_key=lambda x : int(os.path.split(x)[1]))
+        files, folders = smplpact.scan_path(self._smpl_dataset_path, folders_sort=True, folders_key=lambda x : int(os.path.split(x)[1]))
         index = 0
 
         # Configure filters
