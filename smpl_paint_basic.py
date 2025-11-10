@@ -24,7 +24,7 @@ class demo:
         # Settings
         self._device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
-        self._smpl_test_message_path = './data/test_camerahmr_message.txt'
+        self._smpl_test_message_path = './data/patient_pose_raw.json'
         self._smpl_model_path = './data/smpl/SMPL_NEUTRAL.pkl'
         self._smpl_uv_path = './data/smpl_uv.obj'
         self._smpl_texture_path = './data/textures/f_01_alb.002_1k.png'
@@ -40,6 +40,9 @@ class demo:
         self._camera_use_plane = True
 
         self._fps_period = 2.0
+
+        # RealSense intrinsics
+        self._K = np.array([[605.2772, 0, 321.4230],[0, 604.9025, 245.44498],[0, 0, 1]], dtype=np.float32)
         # End Settings
 
         print(f'Using device: {self._device}')
@@ -87,7 +90,7 @@ class demo:
         # SMPL params to mesh
         smpl_params, self._K_smpl = self.smpl_unpack_camerahmr(self._test_camerahmr_message)
 
-        smpl_ok, smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, None, None)
+        smpl_ok, smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, self._K_smpl.T, self._K.T)
         
         smpl_vertices = smpl_result.vertices[0]
         smpl_joints = smpl_result.joints[0]
@@ -157,10 +160,10 @@ class demo:
         betas = torch.tensor([person['smpl_params']['betas'] for person in person_list], dtype=torch.float32, device=self._device)
         camera_translation = torch.tensor([person['camera_translation'] for person in person_list], dtype=torch.float32, device=self._device)
         smpl_params = { 'global_orient' : global_orient, 'body_pose' : body_pose, 'betas' : betas, 'transl' : camera_translation }
-        #f = person_list[0]['focal_length']
-        #w, h = msg['image_size']
-        #K_smpl = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]], dtype=np.float32) 
-        return smpl_params, None #K_smpl
+        f = person_list[0]['focal_length']
+        w, h = msg['image_size']
+        K_smpl = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]], dtype=np.float32) 
+        return smpl_params, K_smpl
     
     def smpl_unpack_cliff(self, msg):
         person_list = msg['persons']
