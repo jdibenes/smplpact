@@ -45,7 +45,6 @@ class demo:
         self._camera_use_plane = True
 
         self._cursor_radius = 0.015
-        self._cursor_height = 0.04
 
         self._brush_size = 0.02
         self._brush_color_center = np.array([255, 0, 0, 255], dtype=np.uint8)
@@ -157,12 +156,13 @@ class demo:
         smpl_joints = smpl_result.joints[0]
         smpl_faces = smpl_result.faces
 
-        # Hands are not visible in the sample images
-        # Remove them since the are jittery
+        # Hands are not visible in the sample images and so they are jittery
+        # Remove hands
         # TODO: move outside of loop since this operation is constant
+        # TODO: removing faces changes any face mappings (e.g., smpl segmentation):
+        # update face map using dict(keys=np.delete(list(0:faces_count), smpl_split, 0), values=0:(faces_count-smpl_split_count))
         remove_hands = ['leftArm', 'leftForeArm', 'leftHand', 'leftHandIndex1', 'rightArm', 'rightForeArm', 'rightHand', 'rightHandIndex1']
-        remove_faces = set()
-        
+        remove_faces = set()        
         for remove_key in remove_hands:
             remove_faces.update(self._smpl_segementation[remove_key])
         smpl_split = list(remove_faces)
@@ -179,8 +179,8 @@ class demo:
         # Set probe position
         probe_hand = self._probe_message['hand_position']
         probe_position = np.array([[probe_hand['x'], probe_hand['y'], probe_hand['z']]], dtype=np.float32)
-        probe_position = (probe_position * 1.004) + smplpact.math_normalize(probe_position)[0] * 0.100  # heuristic approximation (rms depth error + probe height ~10cm?)
-        #probe_position = (probe_position @ self._R_dc.T) + self._t_dc.T # seems to be already aligned?
+        probe_position = (probe_position * 1.004) + smplpact.math_normalize(probe_position)[0] * 0.100  # heuristic approximation (rms depth error for ~1m + probe height ~10cm?)
+        #probe_position = (probe_position @ self._R_dc.T) + self._t_dc.T # depth/color seems to be already aligned?
         self._cursor_pose[3:4, :3] = smplpact.math_transform_points(probe_position, smpl_mesh_pose.T, inverse=False)
         
         # Add cursor to the main scene
@@ -193,8 +193,6 @@ class demo:
         # Paint SMPL mesh
         # Paint circular gradient at camera mesh intersection/closest
         if (cursor_anchor.point is not None):
-            # Gradient option
-            #self._offscreen_renderer.smpl_paint_brush_gradient(smpl_mesh_id, cursor_anchor, self._brush_size, self._brush_color_center, self._brush_color_edge, self._brush_hardness, fill_test=0.25)
             # Solid color option
             self._offscreen_renderer.smpl_paint_brush_solid(smpl_mesh_id, cursor_anchor, self._brush_size, self._brush_color_center, fill_test=0.25)
         
@@ -214,14 +212,10 @@ class demo:
         # Show rendered image
         cv2.imshow('SMPL Paint Demo', cv2.cvtColor(color, cv2.COLOR_RGB2BGR))
 
-        joints_image = (smpl_vertices/smpl_vertices[:,2:3]) @ self._K.T
-        for i in range(0, joints_image.shape[0]):
-            center = (int(joints_image[i, 0]), int(joints_image[i, 1]))
-            #cv2.circle(self._test_image, center, 5, (0, 255, 0), -1)
-
+        # Draw probe
         probe_image = (probe_position/probe_position[:, 2:3]) @ self._K.T
         center = (int(probe_image[0, 0]), int(probe_image[0, 1]))
-        cv2.circle(self._test_image, center, 7, (255, 0, 255), 2)
+        cv2.circle(self._test_image, center, 7, (255, 0, 255), 3)
 
         cv2.imshow('RealSense', self._test_image)
 
