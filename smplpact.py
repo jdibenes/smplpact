@@ -1873,6 +1873,16 @@ class renderer_smpl_control:
     def filter_set_exponential_single(self, weight):
         self._ef_weight = torch.scalar_tensor(weight, dtype=torch.float32, device=self._device) if (weight is not None) else None
 
+    def filter_set_fixed_joints(self, joint_orientation_map):
+        if (joint_orientation_map is not None):
+            for joint, orientation in joint_orientation_map.items():
+                if (orientation is not None):
+                    self._ow_joints[joint] = torch.tensor(orientation, dtype=torch.float32, device=self._device)
+                else:
+                    self._ow_joints.pop(joint, None)
+        else:
+            self._ow_joints = dict()
+
     def _test_bb(self, mesh_joints, K_smpl):
         x0 = self._bb_x0y0x1y1[0]
         y0 = self._bb_x0y0x1y1[1]
@@ -1933,6 +1943,12 @@ class renderer_smpl_control:
             betas = smpl_params['betas'][None, smpl_index]
             transl = smpl_params['transl'][None, smpl_index]
 
+            for joint, orientation in self._ow_joints.items():
+                if (joint != 0):
+                    body_pose[0, joint - 1, :, :] = orientation
+                else:
+                    global_orient[0, joint, :, :] = orientation
+
             if (ud or skip_ef):
                 self._reset_fes(global_orient, body_pose, betas, transl)
             else:
@@ -1970,6 +1986,7 @@ class renderer:
         self._smpl_control.filter_set_bounding_box(None, None, None, None)
         self._smpl_control.filter_set_forward_face(None)
         self._smpl_control.filter_set_exponential_single(None)
+        self._smpl_control.filter_set_fixed_joints(None)
     
     def smpl_load_uv(self, filename_uv, texture_shape):
         self._mesh_control = renderer_mesh_control(filename_uv, texture_shape)
@@ -1985,6 +2002,9 @@ class renderer:
 
     def smpl_filter_set_exponential_single(self, weight):
         self._smpl_control.filter_set_exponential_single(weight)
+
+    def smpl_filter_set_fixed_joints(self, joint_orientation_map):
+        self._smpl_control.filter_set_fixed_joints(joint_orientation_map)
 
     def smpl_get_mesh(self, smpl_params, K_smpl, K_dst, align_mode=smpl_camera_align_Rt, openpose_joints=True, smpl_index=0) -> smpl_model_result:
         return self._smpl_control.to_mesh(smpl_params, K_smpl, K_dst, align_mode, openpose_joints, smpl_index)
