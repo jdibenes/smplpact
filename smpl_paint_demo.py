@@ -28,7 +28,7 @@ class demo:
         # Settings
         self._device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
-        self._smpl_test_message_path = './data/test_camerahmr_message.txt'
+        self._smpl_test_message_path = './data/patient_pose_raw.json'
         self._smpl_model_path = './data/smpl/SMPL_NEUTRAL.pkl'
         self._smpl_uv_path = './data/smpl_uv.obj'
         self._smpl_texture_path = './data/textures/f_01_alb.002_1k.png'
@@ -125,9 +125,9 @@ class demo:
 
     def _loop(self, camerahmr_message):
         # SMPL params to mesh
-        person_list = camerahmr_message['persons']
-        smpl_params = self.smpl_unpack(person_list)
-        smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params)
+        person_list = camerahmr_message
+        smpl_params, smpl_K = self.smpl_unpack_camerahmr(person_list)
+        smpl_ok, smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, smpl_K, None)
         smpl_vertices = smpl_result.vertices[0]
         smpl_joints = smpl_result.joints[0]
         smpl_faces = smpl_result.faces
@@ -202,8 +202,8 @@ class demo:
         self._offscreen_renderer.smpl_paint_clear(smpl_mesh_id)
 
         # Finalize mesh processing
-        self._offscreen_renderer.mesh_present_smpl(smpl_mesh_id)
-        self._offscreen_renderer.mesh_present_user(cursor_mesh_id)
+        self._offscreen_renderer.mesh_present(smpl_mesh_id)
+        self._offscreen_renderer.mesh_present(cursor_mesh_id)
 
         # Render
         color, depth = self._offscreen_renderer.scene_render()
@@ -266,13 +266,30 @@ class demo:
         
         return True
 
-    def smpl_unpack(self, person_list):
+    def smpl_unpack_camerahmr(self, msg):
+        person_list = msg['persons']
         global_orient = torch.tensor([person['smpl_params']['global_orient'] for person in person_list], dtype=torch.float32, device=self._device)
         body_pose = torch.tensor([person['smpl_params']['body_pose'] for person in person_list], dtype=torch.float32, device=self._device)
         betas = torch.tensor([person['smpl_params']['betas'] for person in person_list], dtype=torch.float32, device=self._device)
         camera_translation = torch.tensor([person['camera_translation'] for person in person_list], dtype=torch.float32, device=self._device)
-        smpl_params = { 'global_orient' : global_orient, 'body_pose' : body_pose, 'betas' : betas, 'transl' : camera_translation }        
-        return smpl_params
+        smpl_params = { 'global_orient' : global_orient, 'body_pose' : body_pose, 'betas' : betas, 'transl' : camera_translation }
+        f = person_list[0]['focal_length']
+        w, h = msg['image_size']
+        K_smpl = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]], dtype=np.float32) 
+        return smpl_params, K_smpl
+    
+    def smpl_unpack_cliff(self, msg):
+        person_list = msg['persons']
+        smpl_pose = torch.tensor([person['smpl_pose'] for person in person_list], dtype=torch.float32, device=self._device)
+        global_orient = smpl_pose[:, 0:1, :, :]
+        body_pose = smpl_pose[:, 1:, :, :]
+        betas = torch.tensor([person['smpl_shape'] for person in person_list], dtype=torch.float32, device=self._device)
+        camera_translation = torch.tensor([person['camera_params'] for person in person_list], dtype=torch.float32, device=self._device)
+        smpl_params = { 'global_orient' : global_orient, 'body_pose' : body_pose, 'betas' : betas, 'transl' : camera_translation }
+        f = person_list[0]['focal_length']
+        w, h = msg['image_size']
+        K_smpl = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]], dtype=np.float32) 
+        return smpl_params, K_smpl
 
 
 def main():
