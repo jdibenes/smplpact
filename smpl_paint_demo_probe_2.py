@@ -98,6 +98,23 @@ class demo:
 
         # Configure filters
         self._offscreen_renderer.smpl_filter_reset()
+
+        # Fix arms
+        fixed_joints = {
+            #smplpact.smpl_joints.pelvis : np.eye(3, dtype=np.float32),
+            smplpact.smpl_joints.left_collar : np.eye(3, dtype=np.float32),
+            smplpact.smpl_joints.right_collar : np.eye(3, dtype=np.float32),
+            smplpact.smpl_joints.left_shoulder : np.eye(3, dtype=np.float32),
+            smplpact.smpl_joints.right_shoulder : np.eye(3, dtype=np.float32),
+            smplpact.smpl_joints.left_elbow : np.eye(3, dtype=np.float32),
+            smplpact.smpl_joints.right_elbow : np.eye(3, dtype=np.float32),
+            smplpact.smpl_joints.left_wrist : np.eye(3, dtype=np.float32),
+            smplpact.smpl_joints.right_wrist : np.eye(3, dtype=np.float32),
+            smplpact.smpl_joints.left_hand : np.eye(3, dtype=np.float32),
+            smplpact.smpl_joints.right_hand : np.eye(3, dtype=np.float32),
+        }
+        self._offscreen_renderer.smpl_filter_set_fixed_joints(fixed_joints)
+
         # Bounding box filter
         # Only accept smpl paremeters if sum of weights of specified joints inside the box are >= threshold
         #self._offscreen_renderer.smpl_filter_set_bounding_box([670, 0, 1400, 1080], [smplpact.smpl_joints_openpose.MidHip, smplpact.smpl_joints_openpose.LHip, smplpact.smpl_joints_openpose.RHip], np.array([0.4, 0.3, 0.3], dtype=np.float32), 0.59)
@@ -106,7 +123,7 @@ class demo:
         #self._offscreen_renderer.smpl_filter_set_forward_face(None)
         # Add some temporal smoothing
         # Range is from 0=no updates to 1=no smoothing
-        #self._offscreen_renderer.smpl_filter_set_exponential_single(0.8) 
+        self._offscreen_renderer.smpl_filter_set_exponential_single([0.1, 0.1, 0.1, 0.9]) 
 
         # Run inference and painting
         start = time.perf_counter()
@@ -159,11 +176,12 @@ class demo:
         # TODO: move outside of loop since this operation is constant
         # TODO: removing faces changes any face mappings (e.g., smpl segmentation):
         # update face map using dict(keys=np.delete(list(0:faces_count), smpl_split, 0), values=0:(faces_count-smpl_split_count))
-        remove_hands = ['leftArm', 'leftForeArm', 'leftHand', 'leftHandIndex1', 'rightArm', 'rightForeArm', 'rightHand', 'rightHandIndex1']
-        remove_faces = set()        
-        for remove_key in remove_hands:
-            remove_faces.update(self._smpl_segementation[remove_key])
-        smpl_split = list(remove_faces)
+        #remove_hands = ['leftArm', 'leftForeArm', 'leftHand', 'leftHandIndex1', 'rightArm', 'rightForeArm', 'rightHand', 'rightHandIndex1']
+        #remove_faces = set()        
+        #for remove_key in remove_hands:
+        #    remove_faces.update(self._smpl_segementation[remove_key])
+        #smpl_split = list(remove_faces)
+        smpl_split = None
 
         smpl_mesh = smplpact.mesh_create(smpl_vertices, smpl_faces, visual=None, split=smpl_split)
 
