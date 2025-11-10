@@ -243,12 +243,12 @@ def texture_processor(simplex_uvx, callback, tolerance=0):
 # Mesh Processing
 #------------------------------------------------------------------------------
 
-def mesh_create(vertices, faces, visual=None):
-    return trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
+def mesh_create(vertices, faces, visual=None, split=None):
+    return trimesh.Trimesh(vertices=vertices, faces=faces if (split is None) else np.delete(faces, split, 0), visual=visual, process=False)
 
 
-def mesh_expand(mesh, uv_transform, faces_extended, visual=None):
-    return mesh_create(mesh.vertices.view(np.ndarray)[uv_transform, :], faces_extended, visual)
+def mesh_expand(mesh, uv_transform, faces_extended, visual=None, split=None):
+    return mesh_create(mesh.vertices.view(np.ndarray)[uv_transform, :], faces_extended, visual, split)
 
 
 def mesh_faces_of_vertices(mesh, vertex_indices):
@@ -1716,11 +1716,11 @@ class renderer_mesh_control:
             visual, effect = u
         effect.set_background(texture)
 
-    def mesh_add_smpl(self, group, name, mesh, joints, texture, pose):
+    def mesh_add_smpl(self, group, name, mesh, joints, texture, pose, split=None):
         self._tvfx_add(group, name, texture)
         visual, effect = self._cswvfx[group][name]
         mesh_a = mesh
-        mesh_b = mesh_expand(mesh_a, self._uv_transform, self._mesh_b_faces, visual)
+        mesh_b = mesh_expand(mesh_a, self._uv_transform, self._mesh_b_faces, visual, split)
         mesh_c = smpl_mesh_chart_openpose(mesh_a, joints)
         self._mesh_add(group, name, mesh_a, mesh_b, mesh_c, pose)
         return renderer_mesh_identifier(group, name, 'smpl')
@@ -2019,8 +2019,8 @@ class renderer:
     def scene_render(self):
         return self._scene_control.render()
     
-    def mesh_add_smpl(self, group, name, mesh, joints, texture, pose) -> renderer_mesh_identifier:
-        return self._mesh_control.mesh_add_smpl(group, name, mesh, joints, texture, pose)
+    def mesh_add_smpl(self, group, name, mesh, joints, texture, pose, split=None) -> renderer_mesh_identifier:
+        return self._mesh_control.mesh_add_smpl(group, name, mesh, joints, texture, pose, split)
     
     def mesh_add_user(self, group, name, mesh, pose) -> renderer_mesh_identifier:
         return self._mesh_control.mesh_add_user(group, name, mesh, pose)
