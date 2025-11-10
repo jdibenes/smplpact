@@ -1871,7 +1871,7 @@ class renderer_smpl_control:
         self._ff_threshold = threshold
 
     def filter_set_exponential_single(self, weight):
-        self._ef_weight = torch.scalar_tensor(weight, dtype=torch.float32, device=self._device) if (weight is not None) else None
+        self._ef_weight = torch.tensor(weight, dtype=torch.float32, device=self._device) if (weight is not None) else None
 
     def filter_set_fixed_joints(self, joint_orientation_map):
         if (joint_orientation_map is not None):
@@ -1915,10 +1915,10 @@ class renderer_smpl_control:
         self._state = 1
 
     def _apply_fes(self, global_orient, body_pose, betas, transl):
-        self._g = roma.rotmat_slerp(self._g, global_orient, self._ef_weight)
-        self._p = roma.rotmat_slerp(self._p, body_pose, self._ef_weight)
-        self._b = self._b + self._ef_weight * (betas - self._b)
-        self._t = self._t + self._ef_weight * (transl - self._t)
+        self._g = roma.rotmat_slerp(self._g, global_orient, self._ef_weight[0])
+        self._p = roma.rotmat_slerp(self._p, body_pose, self._ef_weight[1])
+        self._b = self._b + self._ef_weight[2] * (betas - self._b)
+        self._t = self._t + self._ef_weight[3] * (transl - self._t)
         self._state = 2
 
     def to_mesh(self, smpl_params, K_smpl, K_dst, align_mode=smpl_camera_align_Rt, openpose_joints=True, smpl_index=0):
