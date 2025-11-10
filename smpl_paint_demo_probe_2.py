@@ -26,9 +26,6 @@ class demo:
         # Settings
         self._device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
-        #self._smpl_test_message_path = 'C:/Users/jcds/Desktop/Oct_22_stevens/output_pairs/31_1761162056606021415/pose.json'
-        #self._probe_test_message_path = 'C:/Users/jcds/Desktop/Oct_22_stevens/output_pairs/31_1761162056606021415/aruco.json'
-        #self._test_image_path = "C:/Users/jcds/Desktop/Oct_22_stevens/output_pairs/31_1761162056606021415/realsense_image.jpg"
         self._smpl_model_path = './data/smpl/SMPL_NEUTRAL.pkl'
         self._smpl_uv_path = './data/smpl_uv.obj'
         self._smpl_texture_path = './data/textures/f_01_alb.002_1k.png'
