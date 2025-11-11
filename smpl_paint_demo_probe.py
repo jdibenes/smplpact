@@ -85,7 +85,7 @@ class demo:
         self._offscreen_renderer.smpl_filter_reset()
         self._offscreen_renderer.smpl_filter_set_bounding_box([670, 0, 1400, 1080], [smplpact.smpl_joints_openpose.MidHip, smplpact.smpl_joints_openpose.LHip, smplpact.smpl_joints_openpose.RHip], np.array([0.4, 0.3, 0.3], dtype=np.float32), 0.59)
         self._offscreen_renderer.smpl_filter_set_forward_face(None)
-        self._offscreen_renderer.smpl_filter_set_exponential_single(0.25)
+        self._offscreen_renderer.smpl_filter_set_exponential_single([0.25, 0.25, 0.25, 0.9])
 
         # Run inference and painting
         start = time.perf_counter()
