@@ -18,17 +18,16 @@ import time
 import json
 import cv2
 import numpy as np
-import torch
 import trimesh
 import smplpact
 
 
 class demo:
     def run(self):
-        # Settings
-        self._device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        # Settings ------------------------------------------------------------
+        self._device = 'cuda'
 
-        self._smpl_test_message_path = './data/patient_pose_raw.json'
+        self._smpl_message_path = './data/patient_pose_raw.json'
         self._smpl_model_path = './data/smpl/SMPL_NEUTRAL.pkl'
         self._smpl_uv_path = './data/smpl_uv.obj'
         self._smpl_texture_path = './data/textures/f_01_alb.002_1k.png'
@@ -67,11 +66,18 @@ class demo:
         self._decal_angle = 0
         self._joint_projection_radius = 3
         self._joint_projection_color = [255, 0, 255]
+        self._joint_projection_thickness = -1
 
         self._fps_period = 2.0
-        # End Settings
+        # End Settings --------------------------------------------------------
 
-        print(f'Using device: {self._device}')
+        # Load SMPL texture
+        self._texture_array = smplpact.texture_load_image(self._smpl_texture_path, load_alpha=self._smpl_texture_load_alpha)
+
+        # Create sample text texture
+        font = smplpact.texture_load_font(self._text_font_name, self._text_font_size)
+        self._test_text = smplpact.texture_create_multiline_text(self._text_content, font, self._text_font_color, self._text_canvas_color, self._text_stroke_width, self._text_line_spacing)
+        self._test_text = smplpact.texture_pad(self._test_text, self._text_pad_horizontal_ratio, self._text_pad_vertical_ratio, self._text_canvas_color)
 
         # Create offscreen renderer
         fxy = smplpact.geometry_fov_to_f(self._camera_fov_vertical, self._viewport_height)
@@ -81,24 +87,14 @@ class demo:
         cfg_camera = smplpact.renderer_create_settings_camera(fxy, fxy, self._viewport_width // 2, self._viewport_height // 2)
         cfg_camera_transform = smplpact.renderer_create_settings_camera_transform()
         cfg_lamp = smplpact.renderer_create_settings_lamp()
-        
-        self._offscreen_renderer = smplpact.renderer(cfg_offscreen, cfg_scene, cfg_camera, cfg_camera_transform, cfg_lamp)
+        cfg_smpl_model = smplpact.renderer_create_settings_smpl_model(self._smpl_model_path, 10, self._device)
+        cfg_smpl_uv = smplpact.renderer_create_settings_smpl_uv(self._smpl_uv_path, self._texture_array.shape)
 
-        # Create sample text texture
-        font = smplpact.texture_load_font(self._text_font_name, self._text_font_size)
-        self._test_text = smplpact.texture_create_multiline_text(self._text_content, font, self._text_font_color, self._text_canvas_color, self._text_stroke_width, self._text_line_spacing)       
-        self._test_text = smplpact.texture_pad(self._test_text, self._text_pad_horizontal_ratio, self._text_pad_vertical_ratio, self._text_canvas_color)
+        self._offscreen_renderer = smplpact.renderer_context(cfg_offscreen, cfg_scene, cfg_camera, cfg_camera_transform, cfg_lamp, cfg_smpl_model, cfg_smpl_uv)
 
-        # Load SMPL texture
-        self._texture_array = smplpact.texture_load_image(self._smpl_texture_path, load_alpha=self._smpl_texture_load_alpha)
-
-        # Load SMPL model
-        self._offscreen_renderer.smpl_load_model(self._smpl_model_path, 10, self._device)
-        self._offscreen_renderer.smpl_load_uv(self._smpl_uv_path, self._texture_array.shape)
-
-        # Load test CameraHMR message
-        with open(self._smpl_test_message_path, 'rt') as json_file:
-            test_camerahmr_message = json.load(json_file)
+        # Load test pose message
+        with open(self._smpl_message_path, 'rt') as json_file:
+            self._pose_message = json.load(json_file)
 
         # SMPL regions
         self._smpl_regions = ['body_center', 'thigh_left', 'thigh_right', 'lower_leg_left', 'lower_leg_right', 'foot_left', 'foot_right', 'head_center', 'upper_arm_left', 'upper_arm_right', 'lower_arm_left', 'lower_arm_right']
@@ -111,10 +107,17 @@ class demo:
         self._cursor_offset = 0
         self._cursor_angle = 0
 
+        # Print configuration
+        print(f'Using device: {self._device}')
+        print(f'SMPL texture shape: {self._texture_array.shape}')
+
         # Run inference and painting
         start = time.perf_counter()
         count = 0
-        while (self._loop(test_camerahmr_message)):
+        while (True):
+            with self._offscreen_renderer:
+                status = self._paint()
+
             count += 1
             end = time.perf_counter()
             delta = end - start
@@ -123,15 +126,17 @@ class demo:
                 start = end
                 count = 0
 
-    def _loop(self, camerahmr_message):
+            if (not status):
+                break
+
+    def _paint(self):
         # SMPL params to mesh
-        person_list = camerahmr_message
-        smpl_params, smpl_K = self.smpl_unpack_camerahmr(person_list)
-        smpl_ok, smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, smpl_K, None)
+        smpl_params, smpl_K = self._offscreen_renderer.smpl_unpack(self._pose_message)
+        smpl_ok, smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, smpl_K.T, None)
         smpl_vertices = smpl_result.vertices[0]
         smpl_joints = smpl_result.joints[0]
         smpl_faces = smpl_result.faces
-        smpl_mesh = smplpact.mesh_create(smpl_vertices, smpl_faces, visual=None)
+        smpl_mesh = smplpact.mesh_create(smpl_vertices, smpl_faces)
 
         # Compute pose to set mesh upright
         # Poses convert from object to world
@@ -165,12 +170,12 @@ class demo:
         # smpl_anchor.point is None when outside mesh
         local_cursor_orientation = np.vstack((np.cross(smpl_frame.up, -cursor_anchor.direction), smpl_frame.up, -cursor_anchor.direction))
         local_cursor_position = (cursor_anchor.point + self._cursor_height * cursor_anchor.direction) if (cursor_anchor.point is not None) else cursor_anchor.position
-        self._cursor_pose[0:3, :3] = smplpact.math_transform_bearings(local_cursor_orientation, smpl_mesh_pose.T, inverse=False)
-        self._cursor_pose[3:4, :3] = smplpact.math_transform_points(local_cursor_position, smpl_mesh_pose.T, inverse=False)
+        
+        self._cursor_pose[0:3, 0:3] = smplpact.math_transform_bearings(local_cursor_orientation, smpl_mesh_pose.T, inverse=False).T
+        self._cursor_pose[0:3, 3:4] = smplpact.math_transform_points(local_cursor_position, smpl_mesh_pose.T, inverse=False).T
         
         # Add cursor to the main scene
-        cursor_pose = self._cursor_pose.T
-        cursor_mesh_id = self._offscreen_renderer.mesh_add_user('ui', 'cursor', self._cursor_mesh, cursor_pose)
+        cursor_mesh_id = self._offscreen_renderer.mesh_add_user('ui', 'cursor', self._cursor_mesh, self._cursor_pose)
 
         # Perform ray casting from camera to mesh
         # This will be used to paint on the mesh where the camera is looking
@@ -216,7 +221,7 @@ class demo:
         for i in range(0, image_points.shape[0]):
             if (local_points[i, 2] > 0):
                 center = (int(image_points[i, 0]), int(image_points[i, 1]))
-                color = cv2.circle(color, center, self._joint_projection_radius, self._joint_projection_color, -1)
+                color = cv2.circle(color, center, self._joint_projection_radius, self._joint_projection_color, self._joint_projection_thickness)
 
         # Show rendered image
         cv2.imshow('SMPL Paint Demo', cv2.cvtColor(color, cv2.COLOR_RGB2BGR))
@@ -265,31 +270,6 @@ class demo:
             return False
         
         return True
-
-    def smpl_unpack_camerahmr(self, msg):
-        person_list = msg['persons']
-        global_orient = torch.tensor([person['smpl_params']['global_orient'] for person in person_list], dtype=torch.float32, device=self._device)
-        body_pose = torch.tensor([person['smpl_params']['body_pose'] for person in person_list], dtype=torch.float32, device=self._device)
-        betas = torch.tensor([person['smpl_params']['betas'] for person in person_list], dtype=torch.float32, device=self._device)
-        camera_translation = torch.tensor([person['camera_translation'] for person in person_list], dtype=torch.float32, device=self._device)
-        smpl_params = { 'global_orient' : global_orient, 'body_pose' : body_pose, 'betas' : betas, 'transl' : camera_translation }
-        f = person_list[0]['focal_length']
-        w, h = msg['image_size']
-        K_smpl = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]], dtype=np.float32) 
-        return smpl_params, K_smpl
-    
-    def smpl_unpack_cliff(self, msg):
-        person_list = msg['persons']
-        smpl_pose = torch.tensor([person['smpl_pose'] for person in person_list], dtype=torch.float32, device=self._device)
-        global_orient = smpl_pose[:, 0:1, :, :]
-        body_pose = smpl_pose[:, 1:, :, :]
-        betas = torch.tensor([person['smpl_shape'] for person in person_list], dtype=torch.float32, device=self._device)
-        camera_translation = torch.tensor([person['camera_params'] for person in person_list], dtype=torch.float32, device=self._device)
-        smpl_params = { 'global_orient' : global_orient, 'body_pose' : body_pose, 'betas' : betas, 'transl' : camera_translation }
-        f = person_list[0]['focal_length']
-        w, h = msg['image_size']
-        K_smpl = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]], dtype=np.float32) 
-        return smpl_params, K_smpl
 
 
 def main():
