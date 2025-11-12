@@ -29,7 +29,7 @@ class demo:
         self._smpl_texture_path = './data/textures/f_01_alb.002_1k.png'
         self._smpl_texture_load_alpha = False
 
-        self._K_realsense = np.array([[605.2772, 0, 321.4230], [0, 604.9025, 245.44498], [0, 0, 1]], dtype=np.float32)
+        self._realsense_K = np.array([[605.2772, 0, 321.4230], [0, 604.9025, 245.44498], [0, 0, 1]], dtype=np.float32)
         
         self._viewport_width = 1280
         self._viewport_height = 720
@@ -87,8 +87,8 @@ class demo:
 
     def _paint(self):
         # SMPL params to mesh
-        smpl_params, self._K_smpl = self._offscreen_renderer.smpl_unpack(self._pose_message)
-        smpl_ok, smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, self._K_smpl.T, self._K_realsense.T)
+        smpl_params, smpl_K = self._offscreen_renderer.smpl_unpack(self._pose_message)
+        smpl_ok, smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, smpl_K.T, self._realsense_K.T)
         smpl_vertices = smpl_result.vertices[0]
         smpl_joints = smpl_result.joints[0]
         smpl_faces = smpl_result.faces
