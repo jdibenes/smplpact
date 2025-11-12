@@ -30,7 +30,6 @@ class demo:
         self._smpl_uv_path = './data/smpl_uv.obj'
         self._smpl_texture_path = './data/textures/f_01_alb.002_1k.png'
         self._smpl_texture_load_alpha = False
-        self._smpl_face_segmentation_path = './data/smpl_face_segmentation.json'
         
         self._viewport_width = 1280
         self._viewport_height = 720
@@ -77,10 +76,6 @@ class demo:
         # Create UI elements
         self._cursor_mesh = trimesh.creation.icosphere(radius=self._cursor_radius)
         self._cursor_pose = np.eye(4, dtype=np.float32)
-
-        # Load segmentation
-        with open(self._smpl_face_segmentation_path, 'rt') as segmentation_file:
-            self._smpl_segmentation = json.load(segmentation_file)
 
         # Load dataset
         files, folders = smplpact.scan_path(self._smpl_dataset_path, folders_sort=True, folders_key=lambda x : int(os.path.split(x)[1]))
