@@ -1563,6 +1563,48 @@ def renderer_create_settings_camera_transform(center=(0, 0, 0), yaw=0, pitch=0, 
     return s
 
 
+def renderer_create_settings_smpl_model(model_path, num_betas=10, device='cuda'):
+    s = dict()
+    s['model_path'] = model_path
+    s['num_betas'] = num_betas
+    s['device'] = device
+    return s
+
+
+def renderer_create_settings_smpl_uv(filename_uv, texture_shape):
+    s = dict()
+    s['filename_uv'] = filename_uv
+    s['texture_shape'] = texture_shape
+    return s
+
+
+def renderer_create_settings_smpl_filter_bounding_box(x0y0x1y1=None, joints=None, weights=None, threshold_sum=None):
+    s = dict()
+    s['x0y0x1y1'] = x0y0x1y1
+    s['joints'] = joints
+    s['weights'] = weights
+    s['threshold_sum'] = threshold_sum
+    return s
+
+
+def renderer_create_settings_smpl_filter_forward_face(threshold_degrees=None):
+    s = dict()
+    s['threshold_degrees'] = threshold_degrees
+    return s
+
+
+def renderer_create_settings_smpl_filter_exponential_single(weights=None):
+    s = dict()
+    s['weights'] = weights
+    return s
+
+
+def renderer_create_settings_smpl_filter_fixed_joints(joint_orientation_map=None):
+    s = dict()
+    s['joint_orientation_map'] = joint_orientation_map
+    return s
+
+
 class renderer_mesh_identifier:
     def __init__(self, group, name, kind):
         self.group = group
@@ -1855,23 +1897,23 @@ class renderer_mesh_control:
 # TODO: Multiple meshes
 class renderer_smpl_control:
     def __init__(self, model_path, num_betas, device):
-        self._smpl_model = smpl_model(model_path, num_betas, device)
-        self._device = device
+        self._device = torch.device(device)
+        self._smpl_model = smpl_model(model_path, num_betas, self._device)
 
     def filter_reset(self):
         self._state = 0
 
-    def filter_set_bounding_box(self, x0y0x1y1, joints, weights, threshold):
+    def filter_set_bounding_box(self, x0y0x1y1, joints, weights, threshold_sum):
         self._bb_x0y0x1y1 = x0y0x1y1
         self._bb_joints = joints
         self._bb_weights = weights
-        self._bb_threshold = threshold
+        self._bb_threshold = threshold_sum
 
-    def filter_set_forward_face(self, threshold):
-        self._ff_threshold = threshold
+    def filter_set_forward_face(self, threshold_degrees):
+        self._ff_threshold = threshold_degrees
 
-    def filter_set_exponential_single(self, weight):
-        self._ef_weight = torch.tensor(weight, dtype=torch.float32, device=self._device) if (weight is not None) else None
+    def filter_set_exponential_single(self, weights):
+        self._ef_weight = torch.tensor(weights, dtype=torch.float32, device=self._device) if (weights is not None) else None
 
     def filter_set_fixed_joints(self, joint_orientation_map):
         if (joint_orientation_map is not None):
@@ -1955,7 +1997,7 @@ class renderer_smpl_control:
                 self._apply_fes(global_orient, body_pose, betas, transl)
         else:
             if (ud):
-                return (False, None)
+                return (False, None) # tuple return
         
         smpl_params['global_orient'] = self._g
         smpl_params['body_pose'] = self._p
@@ -1969,7 +2011,36 @@ class renderer_smpl_control:
             mesh.joints = np.expand_dims((mesh.joints[0] @ R) + t, axis=0)
             mesh.vertices = np.expand_dims((mesh.vertices[0] @ R) + t, axis=0)
 
-        return (ok, mesh)
+        return (ok, mesh) # tuple return
+    
+    def unpack_camerahmr(self, message):
+        person_list = message['persons']
+        global_orient = torch.tensor([person['smpl_params']['global_orient'] for person in person_list], dtype=torch.float32, device=self._device)
+        body_pose = torch.tensor([person['smpl_params']['body_pose'] for person in person_list], dtype=torch.float32, device=self._device)
+        betas = torch.tensor([person['smpl_params']['betas'] for person in person_list], dtype=torch.float32, device=self._device)
+        camera_translation = torch.tensor([person['camera_translation'] for person in person_list], dtype=torch.float32, device=self._device)
+        smpl_params = { 'global_orient' : global_orient, 'body_pose' : body_pose, 'betas' : betas, 'transl' : camera_translation }
+        f = person_list[0]['focal_length']
+        w, h = message['image_size']
+        K_smpl = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]], dtype=np.float32) 
+        return (smpl_params, K_smpl) # tuple return
+    
+    def unpack_cliff(self, message):
+        person_list = message['persons']
+        smpl_pose = torch.tensor([person['smpl_pose'] for person in person_list], dtype=torch.float32, device=self._device)
+        global_orient = smpl_pose[:, 0:1, :, :]
+        body_pose = smpl_pose[:, 1:, :, :]
+        betas = torch.tensor([person['smpl_shape'] for person in person_list], dtype=torch.float32, device=self._device)
+        camera_translation = torch.tensor([person['camera_params'] for person in person_list], dtype=torch.float32, device=self._device)
+        smpl_params = { 'global_orient' : global_orient, 'body_pose' : body_pose, 'betas' : betas, 'transl' : camera_translation }
+        f = person_list[0]['focal_length']
+        w, h = message['image_size']
+        K_smpl = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]], dtype=np.float32) 
+        return (smpl_params, K_smpl) # tuple return
+    
+    def unpack(self, message):
+        name = message.get('model_type', 'cliff')
+        return self.unpack_camerahmr(message) if (name == 'camerahmr') else self.unpack_cliff(message) if (name == 'cliff') else None
 
 
 #------------------------------------------------------------------------------
@@ -1982,11 +2053,6 @@ class renderer:
 
     def smpl_load_model(self, model_path, num_betas, device):
         self._smpl_control = renderer_smpl_control(model_path, num_betas, device)
-        self._smpl_control.filter_reset()
-        self._smpl_control.filter_set_bounding_box(None, None, None, None)
-        self._smpl_control.filter_set_forward_face(None)
-        self._smpl_control.filter_set_exponential_single(None)
-        self._smpl_control.filter_set_fixed_joints(None)
     
     def smpl_load_uv(self, filename_uv, texture_shape):
         self._mesh_control = renderer_mesh_control(filename_uv, texture_shape)
@@ -2000,14 +2066,17 @@ class renderer:
     def smpl_filter_set_forward_face(self, threshold_degrees):
         self._smpl_control.filter_set_forward_face(threshold_degrees)
 
-    def smpl_filter_set_exponential_single(self, weight):
-        self._smpl_control.filter_set_exponential_single(weight)
+    def smpl_filter_set_exponential_single(self, weights):
+        self._smpl_control.filter_set_exponential_single(weights)
 
     def smpl_filter_set_fixed_joints(self, joint_orientation_map):
         self._smpl_control.filter_set_fixed_joints(joint_orientation_map)
 
     def smpl_get_mesh(self, smpl_params, K_smpl, K_dst, align_mode=smpl_camera_align_Rt, openpose_joints=True, smpl_index=0) -> smpl_model_result:
         return self._smpl_control.to_mesh(smpl_params, K_smpl, K_dst, align_mode, openpose_joints, smpl_index)
+    
+    def smpl_unpack(self, message):
+        return self._smpl_control.unpack(message)
 
     def camera_get_pose(self):
         return self._scene_control.camera_get_pose()
@@ -2135,4 +2204,36 @@ class renderer:
 
     def smpl_paint_flush(self, mesh_id, force_alpha=None):
         self._mesh_control.smpl_paint_flush(mesh_id, force_alpha)
+
+
+class renderer_context(renderer):
+    def __init__(self, settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp, settings_smpl_model, settings_smpl_uv, settings_smpl_filter_bounding_box=None, settings_smpl_filter_forward_face=None, settings_smpl_filter_exponential_single=None, settings_smpl_filter_fixed_joints=None):
+        self.__ready = False
+        self.__settings_renderer = {'settings_offscreen' : settings_offscreen, 'settings_scene' : settings_scene, 'settings_camera' : settings_camera, 'settings_camera_transform' : settings_camera_transform, 'settings_lamp' : settings_lamp}
+        self.__settings_smpl_model = settings_smpl_model
+        self.__settings_smpl_uv = settings_smpl_uv
+        self.__settings_smpl_filter_bounding_box = settings_smpl_filter_bounding_box if (settings_smpl_filter_bounding_box is not None) else renderer_create_settings_smpl_filter_bounding_box()
+        self.__settings_smpl_filter_forward_face = settings_smpl_filter_forward_face if (settings_smpl_filter_forward_face is not None) else renderer_create_settings_smpl_filter_forward_face()
+        self.__settings_smpl_filter_exponential_single = settings_smpl_filter_exponential_single if (settings_smpl_filter_exponential_single is not None) else renderer_create_settings_smpl_filter_exponential_single()
+        self.__settings_smpl_filter_fixed_joints = settings_smpl_filter_fixed_joints if (settings_smpl_filter_fixed_joints is not None) else renderer_create_settings_smpl_filter_fixed_joints()
+
+    def __build(self):
+        if (self.__ready):
+            return
+        super().__init__(**self.__settings_renderer)
+        self.smpl_load_model(**self.__settings_smpl_model)
+        self.smpl_load_uv(**self.__settings_smpl_uv)
+        self.smpl_filter_reset()
+        self.smpl_filter_set_bounding_box(**self.__settings_smpl_filter_bounding_box)
+        self.smpl_filter_set_forward_face(**self.__settings_smpl_filter_forward_face)
+        self.smpl_filter_set_exponential_single(**self.__settings_smpl_filter_exponential_single)
+        self.smpl_filter_set_fixed_joints(**self.__settings_smpl_filter_fixed_joints)
+        self.__ready = True
+ 
+    def __enter__(self):
+        self.__build()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass
 
