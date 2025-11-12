@@ -1906,7 +1906,7 @@ class renderer_smpl_control:
     def filter_set_bounding_box(self, x0y0x1y1, joints, weights, threshold_sum):
         self._bb_x0y0x1y1 = x0y0x1y1
         self._bb_joints = joints
-        self._bb_weights = weights
+        self._bb_weights = np.array(weights, dtype=np.float32) if (weights is not None) else None
         self._bb_threshold = threshold_sum
 
     def filter_set_forward_face(self, threshold_degrees):
