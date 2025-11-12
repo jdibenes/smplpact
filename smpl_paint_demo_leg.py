@@ -105,7 +105,7 @@ class demo:
         smpl_vertices = smpl_result.vertices[0]
         smpl_joints = smpl_result.joints[0]
         smpl_faces = smpl_result.faces
-        smpl_mesh = smplpact.mesh_create(smpl_vertices, smpl_faces, visual=None)
+        smpl_mesh = smplpact.mesh_create(smpl_vertices, smpl_faces)
 
         # Compute pose to set mesh upright
         # Poses convert from object to world
