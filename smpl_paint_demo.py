@@ -214,14 +214,14 @@ class demo:
         color, depth = self._offscreen_renderer.scene_render()
 
         # Render focused joints
-        color = color.copy()
-        world_points = smplpact.math_transform_points(smpl_frame.points, smpl_mesh_pose.T, inverse=False)
-        image_points, local_points, camera_points = self._offscreen_renderer.camera_project_points(world_points, convention=(1, -1, -1))
+        #color = color.copy()
+        #world_points = smplpact.math_transform_points(smpl_frame.points, smpl_mesh_pose.T, inverse=False)
+        #image_points, local_points, camera_points = self._offscreen_renderer.camera_project_points(world_points, convention=(1, -1, -1))
 
-        for i in range(0, image_points.shape[0]):
-            if (local_points[i, 2] > 0):
-                center = (int(image_points[i, 0]), int(image_points[i, 1]))
-                color = cv2.circle(color, center, self._joint_projection_radius, self._joint_projection_color, self._joint_projection_thickness)
+        #for i in range(0, image_points.shape[0]):
+        #    if (local_points[i, 2] > 0):
+        #        center = (int(image_points[i, 0]), int(image_points[i, 1]))
+        #        color = cv2.circle(color, center, self._joint_projection_radius, self._joint_projection_color, self._joint_projection_thickness)
 
         # Show rendered image
         cv2.imshow('SMPL Paint Demo', cv2.cvtColor(color, cv2.COLOR_RGB2BGR))
