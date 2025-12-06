@@ -130,7 +130,38 @@ class demo:
         smpl_vertices = smpl_result.vertices[0]
         smpl_joints = smpl_result.joints[0]
         smpl_faces = smpl_result.faces
-        smpl_mesh = smplpact.mesh_create(smpl_vertices, smpl_faces)
+        smpl_face_normals = smpl_result.face_normals[0]
+
+        #smpl_face_v = smpl_vertices[smpl_faces.reshape((-1)), :].reshape((smpl_faces.shape[0], 3, 3))
+        #smpl_face_d = smpl_face_v[:, 1:3, :] - smpl_face_v[:, 0:1, :]        
+        #smpl_face_n = np.cross(smpl_face_d[:, 0, :], smpl_face_d[:, 1, :])
+        #smpl_face_n = smpl_face_n / np.expand_dims(np.linalg.norm(smpl_face_n, axis=-1), axis=-1)
+
+        #print(smpl_vertices[0:2, :])
+        #print(smpl_face_v[0:2, :, :])
+        #print(smpl_face_d[0:2, :, :])
+        
+        #print(vertices[0, 0:2, :])
+        #print(vertices.shape)
+        #face_vertices = vertices[faces.reshape((-1,)), :].reshape((faces.shape[0], 3, 3))
+        #print(face_vertices[0, 0:2, :, :])
+        #print(face_bases[0, 0:2, :, :])
+
+        self._offscreen_renderer._mesh_control._mesh_a_cache['face_normals'] = smpl_face_normals
+        smpl_mesh = smplpact.mesh_create(smpl_vertices, smpl_faces, smpl_face_normals, cache=self._offscreen_renderer._mesh_control._mesh_a_cache)
+
+        #print('CMP')
+        #print(smpl_vertices.dtype)
+        #print(smpl_joints.dtype)
+        #print(smpl_faces.dtype)
+        #print(smpl_face_normals.dtype)
+
+        #print(smpl_mesh.face_normals[1:2, :])
+        #print(smpl_mesh.face_normals.dtype)
+        #print(smpl_face_normals[1:2, :])
+        #print(smpl_face_normals.dtype)
+        #print(smpl_face_n[1:2, :])
+        #print(smpl_face_n.dtype)
 
         # Compute pose to set mesh upright
         # Poses convert from object to world
@@ -173,12 +204,12 @@ class demo:
         cv2.imshow('SMPL Paint Demo', cv2.cvtColor(color, cv2.COLOR_RGB2BGR))
 
         # Draw probe
-        probe_image = (probe_position / probe_position[:, 2:3]) @ self._realsense_K.T
-        center = (int(probe_image[0, 0]), int(probe_image[0, 1]))
-        cv2.circle(self._realsense_image, center, self._probe_image_radius, self._probe_image_color, self._probe_image_thickness)
+        #probe_image = (probe_position / probe_position[:, 2:3]) @ self._realsense_K.T
+        #center = (int(probe_image[0, 0]), int(probe_image[0, 1]))
+        #cv2.circle(self._realsense_image, center, self._probe_image_radius, self._probe_image_color, self._probe_image_thickness)
 
         # Show image
-        cv2.imshow('RealSense', self._realsense_image)
+        #cv2.imshow('RealSense', self._realsense_image)
 
         # Process keyboard input
         key = cv2.waitKey(1) & 0xFF
