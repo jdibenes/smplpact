@@ -134,7 +134,22 @@ def texture_load_uv(filename_uv):
     for face_index in range(0, mesh_faces_b.shape[0]):
         for vertex_index in range(0, 3):
             uv_transform[mesh_faces_b[face_index, vertex_index]] = mesh_faces_a[face_index, vertex_index]
-    return (mesh_vertices_a, mesh_vertices_b, mesh_faces_a, mesh_faces_b, mesh_uv_a, mesh_uv_b, uv_transform) # tuple return
+    mesh_a = mesh_create(mesh_vertices_a, mesh_faces_a)
+    mesh_b = mesh_expand(mesh_a, uv_transform, mesh_faces_b)
+
+    _ = mesh_a.vertices
+    _ = mesh_a.faces
+    _ = mesh_a.face_normals
+    _ = mesh_a.vertex_faces
+    _ = mesh_a.vertex_neighbors
+
+    _ = mesh_b.vertices
+    _ = mesh_b.faces
+    _ = mesh_b.face_normals
+    _ = mesh_b.vertex_faces
+    _ = mesh_b.vertex_neighbors
+
+    return (mesh_vertices_a, mesh_vertices_b, mesh_faces_a, mesh_faces_b, mesh_uv_a, mesh_uv_b, uv_transform, mesh_a._cache.cache, mesh_b._cache.cache) # tuple return
 
 
 def texture_load_font(font_name, font_size):
@@ -243,12 +258,12 @@ def texture_processor(simplex_uvx, callback, tolerance=0):
 # Mesh Processing
 #------------------------------------------------------------------------------
 
-def mesh_create(vertices, faces, visual=None, split=None):
-    return trimesh.Trimesh(vertices=vertices, faces=faces if (split is None) else np.delete(faces, split, 0), visual=visual, process=False)
+def mesh_create(vertices, faces, face_normals=None, visual=None, split=None, cache=None):
+    return trimesh.Trimesh(vertices=vertices, faces=faces if (split is None) else np.delete(faces, split, 0), face_normals=face_normals, visual=visual, process=False, initial_cache=cache)
 
 
-def mesh_expand(mesh, uv_transform, faces_extended, visual=None, split=None):
-    return mesh_create(mesh.vertices.view(np.ndarray)[uv_transform, :], faces_extended, visual, split)
+def mesh_expand(mesh, uv_transform, faces_extended, visual=None, split=None, cache=None):
+    return mesh_create(mesh.vertices.view(np.ndarray)[uv_transform, :], faces_extended, mesh.face_normals, visual, split, cache)
 
 
 def mesh_faces_of_vertices(mesh, vertex_indices):
@@ -1051,7 +1066,7 @@ def smpl_camera_align_It(K_smpl, K_dst, points_world):
 def smpl_camera_align_Rt(K_smpl, K_dst, points_world):
     u = np.ascontiguousarray(((points_world / points_world[:, 2:3]) @ K_smpl)[:, 0:2])
     ok, r, t = cv2.solvePnP(points_world, u, K_dst.T, None, flags=cv2.SOLVEPNP_SQPNP)
-    return (cv2.Rodrigues(r)[0].T, t.T) if (ok) else smpl_camera_align_It(K_smpl, K_dst, points_world) # tuple return
+    return (cv2.Rodrigues(r)[0].astype(points_world.dtype).T, t.astype(points_world.dtype).T) if (ok) else smpl_camera_align_It(K_smpl, K_dst, points_world) # tuple return
 
 
 def smpl_camera_align_dz(K_smpl, K_dst, points_world):
@@ -1352,10 +1367,11 @@ class smpl_mesh_chart_openpose(mesh_chart):
 
 
 class smpl_model_result:
-    def __init__(self, vertices, faces, joints):
+    def __init__(self, vertices, faces, joints, face_normals):
         self.vertices = vertices
         self.faces = faces
         self.joints = joints
+        self.face_normals = face_normals
 
 
 class smpl_model:
@@ -1364,12 +1380,20 @@ class smpl_model:
     def __init__(self, model_path, num_betas, device):
         self._smpl_model = smplx.SMPLLayer(model_path=model_path, num_betas=num_betas).to(device)
         self._smpl_to_open_pose = torch.tensor(smpl_model.SMPL_TO_OPENPOSE, dtype=torch.long, device=device)
+        self._smpl_faces = torch.tensor(self._smpl_model.faces.reshape((-1,)), dtype=torch.long, device=device)
 
     def to_mesh(self, smpl_params, openpose_joints=True):
         smpl_output = self._smpl_model(**smpl_params)
         vertices = smpl_output.vertices
         joints = smpl_output.joints.index_select(1, self._smpl_to_open_pose) if (openpose_joints) else smpl_output.joints
-        return smpl_model_result(vertices.cpu().numpy(), self._smpl_model.faces, joints.cpu().numpy())
+        faces = self._smpl_model.faces
+
+        face_vertices = torch.index_select(vertices, 1, self._smpl_faces).reshape((vertices.shape[0], faces.shape[0], 3, 3))       
+        face_bases = face_vertices[:, :, 1:3, :] - face_vertices[:, :, 0:1, :]
+        face_normals_scaled = torch.linalg.cross(face_bases[:, :, 0, :], face_bases[:, :, 1, :])
+        face_normals = face_normals_scaled / torch.linalg.vector_norm(face_normals_scaled, dim=-1, keepdim=True)
+
+        return smpl_model_result(vertices.cpu().numpy(), faces, joints.cpu().numpy(), face_normals.cpu().numpy())
 
 
 #------------------------------------------------------------------------------
@@ -1727,7 +1751,7 @@ class renderer_scene_control:
 
 class renderer_mesh_control:
     def __init__(self, filename_uv, texture_shape):
-        self._mesh_a_vertices, self._mesh_b_vertices, self._mesh_a_faces, self._mesh_b_faces, self._mesh_a_uv, self._mesh_b_uv, self._uv_transform = texture_load_uv(filename_uv)
+        self._mesh_a_vertices, self._mesh_b_vertices, self._mesh_a_faces, self._mesh_b_faces, self._mesh_a_uv, self._mesh_b_uv, self._uv_transform, self._mesh_a_cache, self._mesh_b_cache = texture_load_uv(filename_uv)
         self._mesh_a_uvx = texture_uv_to_uvx(self._mesh_a_uv, texture_shape)
         self._mesh_b_uvx = texture_uv_to_uvx(self._mesh_b_uv, texture_shape)
         self._texture_shape = texture_shape
@@ -1762,7 +1786,8 @@ class renderer_mesh_control:
         self._tvfx_add(group, name, texture)
         visual, effect = self._cswvfx[group][name]
         mesh_a = mesh
-        mesh_b = mesh_expand(mesh_a, self._uv_transform, self._mesh_b_faces, visual, split)
+        self._mesh_b_cache['face_normals'] = mesh_a.face_normals
+        mesh_b = mesh_expand(mesh_a, self._uv_transform, self._mesh_b_faces, visual, split, self._mesh_b_cache)
         mesh_c = smpl_mesh_chart_openpose(mesh_a, joints)
         self._mesh_add(group, name, mesh_a, mesh_b, mesh_c, pose)
         return renderer_mesh_identifier(group, name, 'smpl')
@@ -2010,6 +2035,7 @@ class renderer_smpl_control:
             R, t = align_mode(K_smpl, K_dst, mesh.joints[0])
             mesh.joints = np.expand_dims((mesh.joints[0] @ R) + t, axis=0)
             mesh.vertices = np.expand_dims((mesh.vertices[0] @ R) + t, axis=0)
+            mesh.face_normals = np.expand_dims((mesh.face_normals[0] @ R), axis=0)
 
         return (ok, mesh) # tuple return
     
