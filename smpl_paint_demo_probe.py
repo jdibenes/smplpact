@@ -25,7 +25,7 @@ class demo:
         # Settings ------------------------------------------------------------
         self._device = 'cuda'
 
-        self._smpl_dataset_path = 'C:/Users/jcds/Desktop/Oct_22_stevens/output_pairs/'
+        self._smpl_dataset_path = './data/Oct_22_stevens/output_pairs/'
         self._smpl_model_path = './data/smpl/SMPL_NEUTRAL.pkl'
         self._smpl_uv_path = './data/smpl_uv.obj'
         self._smpl_texture_path = './data/textures/f_01_alb.002_1k.png'
@@ -66,14 +66,13 @@ class demo:
         cfg_camera = smplpact.renderer_create_settings_camera(fxy, fxy, self._viewport_width // 2, self._viewport_height // 2)
         cfg_camera_transform = smplpact.renderer_create_settings_camera_transform()
         cfg_lamp = smplpact.renderer_create_settings_lamp()
-        cfg_smpl_model = smplpact.renderer_create_settings_smpl_model(self._smpl_model_path, 10, self._device)
-        cfg_smpl_uv = smplpact.renderer_create_settings_smpl_uv(self._smpl_uv_path, self._texture_array.shape)
+        cfg_smpl_model = smplpact.renderer_create_settings_smpl_model(self._smpl_uv_path, self._texture_array.shape, self._smpl_model_path, 10, self._device)
         cfg_smpl_filter_bb = smplpact.renderer_create_settings_smpl_filter_bounding_box([670, 0, 1400, 1080], [smplpact.smpl_joints_openpose.MidHip, smplpact.smpl_joints_openpose.LHip, smplpact.smpl_joints_openpose.RHip], [0.4, 0.3, 0.3], 0.59)
         cfg_smpl_filter_ff = smplpact.renderer_create_settings_smpl_filter_forward_face()
         cfg_smpl_filter_ef = smplpact.renderer_create_settings_smpl_filter_exponential_single([0.25, 0.25, 0.25, 0.9])
         cfg_smpl_filter_ow = smplpact.renderer_create_settings_smpl_filter_fixed_joints()
 
-        self._offscreen_renderer = smplpact.renderer_context(cfg_offscreen, cfg_scene, cfg_camera, cfg_camera_transform, cfg_lamp, cfg_smpl_model, cfg_smpl_uv, cfg_smpl_filter_bb, cfg_smpl_filter_ff, cfg_smpl_filter_ef, cfg_smpl_filter_ow)
+        self._offscreen_renderer = smplpact.renderer_context(cfg_offscreen, cfg_scene, cfg_camera, cfg_camera_transform, cfg_lamp, cfg_smpl_model, cfg_smpl_filter_bb, cfg_smpl_filter_ff, cfg_smpl_filter_ef, cfg_smpl_filter_ow)
         
         # Create UI elements
         self._cursor_mesh = trimesh.creation.icosphere(radius=self._cursor_radius)
@@ -129,17 +128,15 @@ class demo:
         # SMPL params to mesh
         smpl_params, smpl_K = self._offscreen_renderer.smpl_unpack(self._pose_message)
         smpl_ok, smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, smpl_K.T, self._realsense_K.T)
-        smpl_vertices = smpl_result.vertices[0]
-        smpl_joints = smpl_result.joints[0]
-        smpl_faces = smpl_result.faces
-        smpl_mesh = smplpact.mesh_create(smpl_vertices, smpl_faces)
-
+        smpl_data = smpl_result.at(0)
+        
         # Compute pose to set mesh upright
         # Poses convert from object to world
-        smpl_mesh_pose = np.linalg.inv(smplpact.smpl_mesh_chart_openpose(smpl_mesh, smpl_joints).create_frame('body_center').to_pose()).T
+        smpl_mesh = smplpact.mesh_create(smpl_data.vertices, smpl_data.faces)
+        smpl_mesh_pose = smplpact.math_invert_pose(smplpact.smpl_mesh_chart_openpose(smpl_mesh, smpl_data.joints).create_frame('body_center').to_pose()).T
 
         # Add SMPL mesh to the main scene
-        smpl_mesh_id = self._offscreen_renderer.mesh_add_smpl('smpl', 'patient', smpl_mesh, smpl_joints, self._texture_array, smpl_mesh_pose)
+        smpl_mesh_id = self._offscreen_renderer.mesh_add_smpl('smpl', 'patient', smpl_data, self._texture_array, smpl_mesh_pose)
 
         # Set probe position
         probe_position = np.array([[self._probe_message['x'], self._probe_message['y'], self._probe_message['z']]], dtype=np.float32)
