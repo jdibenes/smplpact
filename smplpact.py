@@ -53,6 +53,13 @@ def math_transform_bearings(bearings, pose, inverse=False):
     return (bearings @ pose[:3, :3]) if (not inverse) else (bearings @ pose[:3, :3].T)
 
 
+def math_invert_pose(pose):
+    T = np.eye(4, 4, dtype=pose.dtype)
+    T[0:3, :3] =  pose[0:3, :3].T
+    T[3:4, :3] = -pose[3:4, :3] @ T[0:3, :3]
+    return T
+
+
 #------------------------------------------------------------------------------
 # Geometry Solvers
 #------------------------------------------------------------------------------
@@ -112,6 +119,19 @@ def geometry_distance_point_segment(line_start, line_end, point):
 # Texture Processing
 #------------------------------------------------------------------------------
 
+class mesh_uv_descriptor:
+    def __init__(self, vertices_a, vertices_b, vertex_faces_a, vertex_faces_b, uv_a, uv_b, faces_a, faces_b, uv_transform):
+        self.vertices_a = vertices_a
+        self.vertices_b = vertices_b
+        self.vertex_faces_a = vertex_faces_a
+        self.vertex_faces_b = vertex_faces_b
+        self.uv_a = uv_a
+        self.uv_b = uv_b
+        self.faces_a = faces_a
+        self.faces_b = faces_b        
+        self.uv_transform = uv_transform
+
+
 def texture_load_image(filename_image, load_alpha=True, alpha=255):
     rgb = cv2.imread(filename_image, cv2.IMREAD_COLOR_RGB)
     raw = cv2.imread(filename_image, cv2.IMREAD_UNCHANGED)
@@ -124,32 +144,23 @@ def texture_load_uv(filename_uv):
         obj_mesh_a = trimesh.exchange.obj.load_obj(file_obj=obj_file, maintain_order=True)
     with open(filename_uv, 'r') as obj_file:
         obj_mesh_b = trimesh.exchange.obj.load_obj(file_obj=obj_file)
-    mesh_vertices_a = obj_mesh_a['geometry'][filename_uv]['vertices']
-    mesh_vertices_b = obj_mesh_b['geometry'][filename_uv]['vertices']
-    mesh_faces_a = obj_mesh_a['geometry'][filename_uv]['faces']
-    mesh_faces_b = obj_mesh_b['geometry'][filename_uv]['faces']
-    mesh_uv_a = obj_mesh_a['geometry'][filename_uv]['visual'].uv
-    mesh_uv_b = obj_mesh_b['geometry'][filename_uv]['visual'].uv
-    uv_transform = np.zeros(mesh_vertices_b.shape[0], np.int64)
-    for face_index in range(0, mesh_faces_b.shape[0]):
+    vertices_a = obj_mesh_a['geometry'][filename_uv]['vertices']
+    vertices_b = obj_mesh_b['geometry'][filename_uv]['vertices']
+    faces_a = obj_mesh_a['geometry'][filename_uv]['faces']
+    faces_b = obj_mesh_b['geometry'][filename_uv]['faces']
+    uv_a = obj_mesh_a['geometry'][filename_uv]['visual'].uv
+    uv_b = obj_mesh_b['geometry'][filename_uv]['visual'].uv
+    uv_transform = np.zeros(vertices_b.shape[0], np.int64)
+    for face_index in range(0, faces_b.shape[0]):
         for vertex_index in range(0, 3):
-            uv_transform[mesh_faces_b[face_index, vertex_index]] = mesh_faces_a[face_index, vertex_index]
-    mesh_a = mesh_create(mesh_vertices_a, mesh_faces_a)
-    mesh_b = mesh_expand(mesh_a, uv_transform, mesh_faces_b)
-
-    _ = mesh_a.vertices
-    _ = mesh_a.faces
-    _ = mesh_a.face_normals
-    _ = mesh_a.vertex_faces
-    _ = mesh_a.vertex_neighbors
-
-    _ = mesh_b.vertices
-    _ = mesh_b.faces
-    _ = mesh_b.face_normals
-    _ = mesh_b.vertex_faces
-    _ = mesh_b.vertex_neighbors
-
-    return (mesh_vertices_a, mesh_vertices_b, mesh_faces_a, mesh_faces_b, mesh_uv_a, mesh_uv_b, uv_transform, mesh_a._cache.cache, mesh_b._cache.cache) # tuple return
+            uv_transform[faces_b[face_index, vertex_index]] = faces_a[face_index, vertex_index]
+    mesh_a = mesh_create(vertices_a, faces_a)
+    mesh_b = mesh_expand(mesh_a, uv_transform, faces_b)
+    vertex_faces_a = mesh_a.vertex_faces.copy()
+    vertex_faces_b = mesh_b.vertex_faces.copy()
+    vertex_faces_a[vertex_faces_a < 0] = len(faces_a)
+    vertex_faces_b[vertex_faces_b < 0] = len(faces_b)
+    return mesh_uv_descriptor(vertices_a, vertices_b, vertex_faces_a, vertex_faces_b, uv_a, uv_b, faces_a, faces_b, uv_transform)
 
 
 def texture_load_font(font_name, font_size):
@@ -190,11 +201,12 @@ def texture_create_visual(uv, texture):
 
 
 def texture_uv_to_uvx(uv, image_shape):
-    u = uv[:, 0:1] * (image_shape[1] - 1)
+    u =      uv[:, 0:1]  * (image_shape[1] - 1)
     v = (1 - uv[:, 1:2]) * (image_shape[0] - 1)
     return np.hstack((u, v))
 
 
+# TODO: changes input
 def texture_uvx_invert(uvx, image_shape, axis):
     uvx[:, axis] = (image_shape[1 - axis] - 1) - uvx[:, axis]
     return uvx
@@ -226,6 +238,7 @@ def texture_alpha_blend(texture_1a, texture_a, alpha):
     return (1 - alpha) * texture_1a + alpha * texture_a
 
 
+# TODO: changes input
 def texture_alpha_remap(alpha, src, dst):
     ah = alpha >= src[1]
     al = alpha < src[1]
@@ -258,12 +271,12 @@ def texture_processor(simplex_uvx, callback, tolerance=0):
 # Mesh Processing
 #------------------------------------------------------------------------------
 
-def mesh_create(vertices, faces, face_normals=None, visual=None, split=None, cache=None):
-    return trimesh.Trimesh(vertices=vertices, faces=faces if (split is None) else np.delete(faces, split, 0), face_normals=face_normals, visual=visual, process=False, initial_cache=cache)
+def mesh_create(vertices, faces, vertex_normals=None, face_normals=None, visual=None):
+    return trimesh.Trimesh(vertices=vertices, faces=faces, vertex_normals=vertex_normals, face_normals=face_normals, visual=visual, process=False)
 
 
-def mesh_expand(mesh, uv_transform, faces_extended, visual=None, split=None, cache=None):
-    return mesh_create(mesh.vertices.view(np.ndarray)[uv_transform, :], faces_extended, mesh.face_normals, visual, split, cache)
+def mesh_expand(mesh, uv_transform, faces_extended, visual=None):
+    return mesh_create(mesh.vertices.view(np.ndarray)[uv_transform, :], faces_extended, mesh.vertex_normals, mesh.face_normals, visual)
 
 
 def mesh_faces_of_vertices(mesh, vertex_indices):
@@ -350,32 +363,8 @@ def mesh_select_complete_faces(mesh, vertex_indices):
     return (face_indices_complete, vertex_indices_complete) # tuple return
 
 
-class mesh_split:
-    def __init__(self, faces_p, keep_n, keep_p):
-        self.faces_p = faces_p
-        self.keep_n = keep_n
-        self.keep_p = keep_p
-
-
-# TODO: this is slow
-def mesh_to_renderer(mesh, split=None):
-    m = pyrender.Mesh.from_trimesh(mesh)
-
-    if (split is None):
-        return m
-    
-    primitive = m.primitives[0]
-
-    positions = primitive.positions
-    normals = primitive.normals
-    texcoord_0 = primitive.texcoord_0
-    color_0 = primitive.color_0
-    indices = primitive.indices
-    material = primitive.material
-    mode = primitive.mode
-    poses = primitive.poses
-
-    return pyrender.Mesh(primitives=[pyrender.Primitive(positions=positions, normals=normals, texcoord_0=texcoord_0, color_0=color_0, indices=select, material=material, mode=mode, poses=poses) for select, keep in [(np.delete(indices, split.faces_p, 0), split.keep_n), (indices[split.faces_p, :], split.keep_p)] if keep])
+def mesh_to_renderer(mesh):
+    return pyrender.Mesh.from_trimesh(mesh)
 
 
 class mesh_neighborhood_builder:
@@ -1072,7 +1061,7 @@ def smpl_camera_align_Rt(K_smpl, K_dst, points_world):
 def smpl_camera_align_dz(K_smpl, K_dst, points_world):
     K = K_smpl @ np.linalg.inv(K_dst)
     s = (K[0, 0] + K[1, 1]) / 2
-    return ((1 / s) * K, 0) # tuple return
+    return ((1 / s) * K, np.zeros((1, 3), dtype=points_world.dtype)) # tuple return
 
 
 class smpl_joints:
@@ -1367,33 +1356,55 @@ class smpl_mesh_chart_openpose(mesh_chart):
 
 
 class smpl_model_result:
-    def __init__(self, vertices, faces, joints, face_normals):
+    def __init__(self, vertices, vertex_normals, vertices_uv, vertex_normals_uv, faces, face_normals, joints):
         self.vertices = vertices
+        self.vertex_normals = vertex_normals
+        self.vertices_uv = vertices_uv
+        self.vertex_normals_uv = vertex_normals_uv
         self.faces = faces
-        self.joints = joints
         self.face_normals = face_normals
+        self.joints = joints
+
+    def at(self, i):
+        return smpl_model_result(self.vertices[i], self.vertex_normals[i], self.vertices_uv[i], self.vertex_normals_uv[i], self.faces, self.face_normals[i], self.joints[i])
 
 
 class smpl_model:
     SMPL_TO_OPENPOSE = [24, 12, 17, 19, 21, 16, 18, 20, 0, 2, 5, 8, 1, 4, 7, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34]
 
-    def __init__(self, model_path, num_betas, device):
+    def __init__(self, uv_descriptor, model_path, num_betas, device):
         self._smpl_model = smplx.SMPLLayer(model_path=model_path, num_betas=num_betas).to(device)
         self._smpl_to_open_pose = torch.tensor(smpl_model.SMPL_TO_OPENPOSE, dtype=torch.long, device=device)
         self._smpl_faces = torch.tensor(self._smpl_model.faces.reshape((-1,)), dtype=torch.long, device=device)
+        self._smpl_uv_transform = torch.tensor(uv_descriptor.uv_transform, dtype=torch.long, device=device)
+        self._smpl_vertex_faces = torch.tensor(uv_descriptor.vertex_faces_a.reshape((-1,)), dtype=torch.long, device=device)
+        self._smpl_vertex_faces_width = uv_descriptor.vertex_faces_a.shape[1]
 
-    def to_mesh(self, smpl_params, openpose_joints=True):
+    def to_mesh(self, smpl_params):
         smpl_output = self._smpl_model(**smpl_params)
+
         vertices = smpl_output.vertices
-        joints = smpl_output.joints.index_select(1, self._smpl_to_open_pose) if (openpose_joints) else smpl_output.joints
+        joints = smpl_output.joints.index_select(1, self._smpl_to_open_pose)
         faces = self._smpl_model.faces
 
-        face_vertices = torch.index_select(vertices, 1, self._smpl_faces).reshape((vertices.shape[0], faces.shape[0], 3, 3))       
+        batch_count = vertices.shape[0]
+        vertex_count = vertices.shape[1]
+        face_count = faces.shape[0]
+
+        face_vertices = torch.index_select(vertices, 1, self._smpl_faces).reshape((batch_count, face_count, 3, 3))
         face_bases = face_vertices[:, :, 1:3, :] - face_vertices[:, :, 0:1, :]
         face_normals_scaled = torch.linalg.cross(face_bases[:, :, 0, :], face_bases[:, :, 1, :])
         face_normals = face_normals_scaled / torch.linalg.vector_norm(face_normals_scaled, dim=-1, keepdim=True)
 
-        return smpl_model_result(vertices.cpu().numpy(), faces, joints.cpu().numpy(), face_normals.cpu().numpy())
+        face_normals_z = torch.cat((face_normals, torch.zeros((batch_count, 1, 3), dtype=torch.float32, device=face_normals.device)), dim=1)
+        vertex_faces_normals = torch.index_select(face_normals_z, 1, self._smpl_vertex_faces).reshape((batch_count, vertex_count, self._smpl_vertex_faces_width, 3))
+        vertex_normals_scaled = torch.sum(vertex_faces_normals, dim=2, keepdim=False)
+        vertex_normals = vertex_normals_scaled / torch.linalg.vector_norm(vertex_normals_scaled, dim=-1, keepdim=True)
+        
+        vertices_uv       = torch.index_select(vertices,       1, self._smpl_uv_transform)
+        vertex_normals_uv = torch.index_select(vertex_normals, 1, self._smpl_uv_transform)
+ 
+        return smpl_model_result(vertices.cpu().numpy(), vertex_normals.cpu().numpy(), vertices_uv.cpu().numpy(), vertex_normals_uv.cpu().numpy(), faces, face_normals.cpu().numpy(), joints.cpu().numpy())
 
 
 #------------------------------------------------------------------------------
@@ -1587,18 +1598,13 @@ def renderer_create_settings_camera_transform(center=(0, 0, 0), yaw=0, pitch=0, 
     return s
 
 
-def renderer_create_settings_smpl_model(model_path, num_betas=10, device='cuda'):
-    s = dict()
-    s['model_path'] = model_path
-    s['num_betas'] = num_betas
-    s['device'] = device
-    return s
-
-
-def renderer_create_settings_smpl_uv(filename_uv, texture_shape):
+def renderer_create_settings_smpl_model(filename_uv, texture_shape, model_path, num_betas=10, device='cuda'):
     s = dict()
     s['filename_uv'] = filename_uv
     s['texture_shape'] = texture_shape
+    s['model_path'] = model_path
+    s['num_betas'] = num_betas
+    s['device'] = device
     return s
 
 
@@ -1750,10 +1756,14 @@ class renderer_scene_control:
 
 
 class renderer_mesh_control:
-    def __init__(self, filename_uv, texture_shape):
-        self._mesh_a_vertices, self._mesh_b_vertices, self._mesh_a_faces, self._mesh_b_faces, self._mesh_a_uv, self._mesh_b_uv, self._uv_transform, self._mesh_a_cache, self._mesh_b_cache = texture_load_uv(filename_uv)
-        self._mesh_a_uvx = texture_uv_to_uvx(self._mesh_a_uv, texture_shape)
-        self._mesh_b_uvx = texture_uv_to_uvx(self._mesh_b_uv, texture_shape)
+    def __init__(self, uv_descriptor, texture_shape):
+        self._mesh_a_faces = uv_descriptor.faces_a
+        self._mesh_b_faces = uv_descriptor.faces_b
+        self._mesh_a_uv = uv_descriptor.uv_a
+        self._mesh_b_uv = uv_descriptor.uv_b
+        self._uv_transform = uv_descriptor.uv_transform
+        self._mesh_a_uvx = texture_uv_to_uvx(uv_descriptor.uv_a, texture_shape)
+        self._mesh_b_uvx = texture_uv_to_uvx(uv_descriptor.uv_b, texture_shape)
         self._texture_shape = texture_shape
         self._meshes = dict()
         self._cswvfx = dict()
@@ -1782,13 +1792,12 @@ class renderer_mesh_control:
             visual, effect = u
         effect.set_background(texture)
 
-    def mesh_add_smpl(self, group, name, mesh, joints, texture, pose, split=None):
+    def mesh_add_smpl(self, group, name, smpl_data, texture, pose):
         self._tvfx_add(group, name, texture)
         visual, effect = self._cswvfx[group][name]
-        mesh_a = mesh
-        self._mesh_b_cache['face_normals'] = mesh_a.face_normals
-        mesh_b = mesh_expand(mesh_a, self._uv_transform, self._mesh_b_faces, visual, split, self._mesh_b_cache)
-        mesh_c = smpl_mesh_chart_openpose(mesh_a, joints)
+        mesh_a = mesh_create(smpl_data.vertices,    self._mesh_a_faces, smpl_data.vertex_normals,    smpl_data.face_normals)
+        mesh_b = mesh_create(smpl_data.vertices_uv, self._mesh_b_faces, smpl_data.vertex_normals_uv, smpl_data.face_normals, visual)
+        mesh_c = smpl_mesh_chart_openpose(mesh_a, smpl_data.joints)
         self._mesh_add(group, name, mesh_a, mesh_b, mesh_c, pose)
         return renderer_mesh_identifier(group, name, 'smpl')
 
@@ -1921,9 +1930,9 @@ class renderer_mesh_control:
 
 # TODO: Multiple meshes
 class renderer_smpl_control:
-    def __init__(self, model_path, num_betas, device):
+    def __init__(self, uv_descriptor, model_path, num_betas, device):
         self._device = torch.device(device)
-        self._smpl_model = smpl_model(model_path, num_betas, self._device)
+        self._smpl_model = smpl_model(uv_descriptor, model_path, num_betas, self._device)
 
     def filter_reset(self):
         self._state = 0
@@ -1988,15 +1997,14 @@ class renderer_smpl_control:
         self._t = self._t + self._ef_weight[3] * (transl - self._t)
         self._state = 2
 
-    def to_mesh(self, smpl_params, K_smpl, K_dst, align_mode=smpl_camera_align_Rt, openpose_joints=True, smpl_index=0):
+    def to_mesh(self, smpl_params, K_smpl, K_dst, align_mode=smpl_camera_align_Rt):
         test_bb = self._bb_threshold is not None
         test_ff = self._ff_threshold is not None
         skip_ef = self._ef_weight is None
-        move_sm = K_dst is not None
 
         if (test_bb or test_ff):
-            mesh = self._smpl_model.to_mesh(smpl_params, True)
-            mesh_joints = mesh.joints[smpl_index]
+            mesh = self._smpl_model.to_mesh(smpl_params)
+            mesh_joints = mesh.joints[0]
 
         keep_bb = (not test_bb) or self._test_bb(mesh_joints, K_smpl)
         keep_ff = (not test_ff) or self._test_ff(mesh_joints)
@@ -2005,10 +2013,10 @@ class renderer_smpl_control:
         ud = self._state <= 0
 
         if (ok):
-            global_orient = smpl_params['global_orient'][None, smpl_index]
-            body_pose = smpl_params['body_pose'][None, smpl_index]
-            betas = smpl_params['betas'][None, smpl_index]
-            transl = smpl_params['transl'][None, smpl_index]
+            global_orient = smpl_params['global_orient'][None, 0]
+            body_pose     = smpl_params['body_pose'][None, 0]
+            betas         = smpl_params['betas'][None, 0]
+            transl        = smpl_params['transl'][None, 0]
 
             for joint, orientation in self._ow_joints.items():
                 if (joint != 0):
@@ -2025,17 +2033,20 @@ class renderer_smpl_control:
                 return (False, None) # tuple return
         
         smpl_params['global_orient'] = self._g
-        smpl_params['body_pose'] = self._p
-        smpl_params['betas'] = self._b
-        smpl_params['transl'] = self._t
+        smpl_params['body_pose']     = self._p
+        smpl_params['betas']         = self._b
+        smpl_params['transl']        = self._t
 
-        mesh = self._smpl_model.to_mesh(smpl_params, openpose_joints)
+        mesh = self._smpl_model.to_mesh(smpl_params)
 
-        if (move_sm):
-            R, t = align_mode(K_smpl, K_dst, mesh.joints[0])
-            mesh.joints = np.expand_dims((mesh.joints[0] @ R) + t, axis=0)
-            mesh.vertices = np.expand_dims((mesh.vertices[0] @ R) + t, axis=0)
-            mesh.face_normals = np.expand_dims((mesh.face_normals[0] @ R), axis=0)
+        Rt = np.vstack(align_mode(K_smpl, K_dst, mesh.joints[0]))
+
+        mesh.vertices          = np.expand_dims(math_transform_points(  mesh.vertices[0],          Rt, False), axis=0)
+        mesh.vertex_normals    = np.expand_dims(math_transform_bearings(mesh.vertex_normals[0],    Rt, False), axis=0)
+        mesh.vertices_uv       = np.expand_dims(math_transform_points(  mesh.vertices_uv[0],       Rt, False), axis=0)
+        mesh.vertex_normals_uv = np.expand_dims(math_transform_bearings(mesh.vertex_normals_uv[0], Rt, False), axis=0)
+        mesh.face_normals      = np.expand_dims(math_transform_bearings(mesh.face_normals[0],      Rt, False), axis=0)
+        mesh.joints            = np.expand_dims(math_transform_points(  mesh.joints[0],            Rt, False), axis=0)
 
         return (ok, mesh) # tuple return
     
@@ -2077,11 +2088,10 @@ class renderer:
     def __init__(self, settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp):
         self._scene_control = renderer_scene_control(settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp)
 
-    def smpl_load_model(self, model_path, num_betas, device):
-        self._smpl_control = renderer_smpl_control(model_path, num_betas, device)
-    
-    def smpl_load_uv(self, filename_uv, texture_shape):
-        self._mesh_control = renderer_mesh_control(filename_uv, texture_shape)
+    def smpl_load_model(self, filename_uv, texture_shape, model_path, num_betas, device):
+        uv_descriptor = texture_load_uv(filename_uv)
+        self._mesh_control = renderer_mesh_control(uv_descriptor, texture_shape)
+        self._smpl_control = renderer_smpl_control(uv_descriptor, model_path, num_betas, device)        
 
     def smpl_filter_reset(self):
         self._smpl_control.filter_reset()
@@ -2098,8 +2108,8 @@ class renderer:
     def smpl_filter_set_fixed_joints(self, joint_orientation_map):
         self._smpl_control.filter_set_fixed_joints(joint_orientation_map)
 
-    def smpl_get_mesh(self, smpl_params, K_smpl, K_dst, align_mode=smpl_camera_align_Rt, openpose_joints=True, smpl_index=0) -> smpl_model_result:
-        return self._smpl_control.to_mesh(smpl_params, K_smpl, K_dst, align_mode, openpose_joints, smpl_index)
+    def smpl_get_mesh(self, smpl_params, K_smpl, K_dst, align_mode=smpl_camera_align_Rt):
+        return self._smpl_control.to_mesh(smpl_params, K_smpl, K_dst, align_mode)
     
     def smpl_unpack(self, message):
         return self._smpl_control.unpack(message)
@@ -2134,8 +2144,8 @@ class renderer:
     def scene_render(self):
         return self._scene_control.render()
     
-    def mesh_add_smpl(self, group, name, mesh, joints, texture, pose, split=None) -> renderer_mesh_identifier:
-        return self._mesh_control.mesh_add_smpl(group, name, mesh, joints, texture, pose, split)
+    def mesh_add_smpl(self, group, name, smpl_data, texture, pose) -> renderer_mesh_identifier:
+        return self._mesh_control.mesh_add_smpl(group, name, smpl_data, texture, pose)
     
     def mesh_add_user(self, group, name, mesh, pose) -> renderer_mesh_identifier:
         return self._mesh_control.mesh_add_user(group, name, mesh, pose)
@@ -2147,10 +2157,10 @@ class renderer:
     def mesh_get_pose(self, mesh_id):
         return self._mesh_control.mesh_get_pose(mesh_id)
 
-    def mesh_present(self, mesh_id, split=None):
+    def mesh_present(self, mesh_id):
         mesh = self._mesh_control.mesh_get_full(mesh_id) if (mesh_id.kind == 'smpl') else self._mesh_control.mesh_get_base(mesh_id)
         pose = self._mesh_control.mesh_get_pose(mesh_id)
-        item = mesh_to_renderer(mesh, split)
+        item = mesh_to_renderer(mesh)
         self._scene_control.group_item_add(mesh_id.group, mesh_id.name, item, pose)
 
     def mesh_remove_item(self, mesh_id):
@@ -2233,11 +2243,10 @@ class renderer:
 
 
 class renderer_context(renderer):
-    def __init__(self, settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp, settings_smpl_model, settings_smpl_uv, settings_smpl_filter_bounding_box=None, settings_smpl_filter_forward_face=None, settings_smpl_filter_exponential_single=None, settings_smpl_filter_fixed_joints=None):
+    def __init__(self, settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp, settings_smpl_model, settings_smpl_filter_bounding_box=None, settings_smpl_filter_forward_face=None, settings_smpl_filter_exponential_single=None, settings_smpl_filter_fixed_joints=None):
         self.__ready = False
         self.__settings_renderer = {'settings_offscreen' : settings_offscreen, 'settings_scene' : settings_scene, 'settings_camera' : settings_camera, 'settings_camera_transform' : settings_camera_transform, 'settings_lamp' : settings_lamp}
         self.__settings_smpl_model = settings_smpl_model
-        self.__settings_smpl_uv = settings_smpl_uv
         self.__settings_smpl_filter_bounding_box = settings_smpl_filter_bounding_box if (settings_smpl_filter_bounding_box is not None) else renderer_create_settings_smpl_filter_bounding_box()
         self.__settings_smpl_filter_forward_face = settings_smpl_filter_forward_face if (settings_smpl_filter_forward_face is not None) else renderer_create_settings_smpl_filter_forward_face()
         self.__settings_smpl_filter_exponential_single = settings_smpl_filter_exponential_single if (settings_smpl_filter_exponential_single is not None) else renderer_create_settings_smpl_filter_exponential_single()
@@ -2246,14 +2255,16 @@ class renderer_context(renderer):
     def __build(self):
         if (self.__ready):
             return
+        
         super().__init__(**self.__settings_renderer)
+
         self.smpl_load_model(**self.__settings_smpl_model)
-        self.smpl_load_uv(**self.__settings_smpl_uv)
         self.smpl_filter_reset()
         self.smpl_filter_set_bounding_box(**self.__settings_smpl_filter_bounding_box)
         self.smpl_filter_set_forward_face(**self.__settings_smpl_filter_forward_face)
         self.smpl_filter_set_exponential_single(**self.__settings_smpl_filter_exponential_single)
         self.smpl_filter_set_fixed_joints(**self.__settings_smpl_filter_fixed_joints)
+
         self.__ready = True
  
     def __enter__(self):
