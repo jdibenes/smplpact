@@ -1762,6 +1762,7 @@ class renderer_scene_control:
         self._groups.clear()
 
 
+# TODO: this class uses a cache hack to bypass trimesh's overzealous validation of face normals
 class renderer_mesh_control:
     def __init__(self, uv_descriptor: mesh_uv_descriptor):
         self._uv_set = uv_descriptor
@@ -1795,9 +1796,13 @@ class renderer_mesh_control:
     def mesh_add_smpl(self, group, name, smpl_data, texture, pose):
         self._tvfx_add(group, name, texture)
         visual, effect = self._cswvfx[group][name]
-        mesh_a = mesh_create(smpl_data.vertices,    self._uv_set.faces_a, smpl_data.vertex_normals,    smpl_data.face_normals)
-        mesh_b = mesh_create(smpl_data.vertices_uv, self._uv_set.faces_b, smpl_data.vertex_normals_uv, smpl_data.face_normals, visual)
+        mesh_a = mesh_create(smpl_data.vertices,    self._uv_set.faces_a)                #, smpl_data.vertex_normals,    smpl_data.face_normals)
+        mesh_b = mesh_create(smpl_data.vertices_uv, self._uv_set.faces_b, visual=visual) #, smpl_data.vertex_normals_uv, smpl_data.face_normals, visual)
         mesh_c = smpl_mesh_chart_openpose(mesh_a, smpl_data.joints)
+        mesh_a._cache['face_normals'] = smpl_data.face_normals
+        mesh_b._cache['face_normals'] = smpl_data.face_normals
+        mesh_a._cache['vertex_normals'] = smpl_data.vertex_normals
+        mesh_b._cache['vertex_normals'] = smpl_data.vertex_normals_uv
         self._mesh_add(group, name, mesh_a, mesh_b, mesh_c, pose)
         return renderer_mesh_identifier(group, name, 'smpl', smpl_data)
 
