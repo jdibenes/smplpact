@@ -120,16 +120,23 @@ def geometry_distance_point_segment(line_start, line_end, point):
 #------------------------------------------------------------------------------
 
 class mesh_uv_descriptor:
-    def __init__(self, vertices_a, vertices_b, vertex_faces_a, vertex_faces_b, uv_a, uv_b, faces_a, faces_b, uv_transform):
+    def __init__(self, vertices_a, vertices_b, faces_a, faces_b, uv_a, uv_b, uvx_a, uvx_b, texture_shape, uv_transform, vertex_faces_a, vertex_faces_b, vertex_faces_pad_a, vertex_faces_pad_b, vertex_neighbors_a, vertex_neighbors_b):
         self.vertices_a = vertices_a
         self.vertices_b = vertices_b
-        self.vertex_faces_a = vertex_faces_a
-        self.vertex_faces_b = vertex_faces_b
+        self.faces_a = faces_a
+        self.faces_b = faces_b
         self.uv_a = uv_a
         self.uv_b = uv_b
-        self.faces_a = faces_a
-        self.faces_b = faces_b        
+        self.uvx_a = uvx_a
+        self.uvx_b = uvx_b
+        self.texture_shape = texture_shape
         self.uv_transform = uv_transform
+        self.vertex_faces_a = vertex_faces_a
+        self.vertex_faces_b = vertex_faces_b
+        self.vertex_faces_pad_a = vertex_faces_pad_a
+        self.vertex_faces_pad_b = vertex_faces_pad_b
+        self.vertex_neighbors_a = vertex_neighbors_a
+        self.vertex_neighbors_b = vertex_neighbors_b
 
 
 def texture_load_image(filename_image, load_alpha=True, alpha=255):
@@ -139,7 +146,7 @@ def texture_load_image(filename_image, load_alpha=True, alpha=255):
     return np.dstack((rgb, a))
 
 
-def texture_load_uv(filename_uv):
+def texture_load_uv(filename_uv, texture_shape):
     with open(filename_uv, 'r') as obj_file:
         obj_mesh_a = trimesh.exchange.obj.load_obj(file_obj=obj_file, maintain_order=True)
     with open(filename_uv, 'r') as obj_file:
@@ -150,6 +157,8 @@ def texture_load_uv(filename_uv):
     faces_b = obj_mesh_b['geometry'][filename_uv]['faces']
     uv_a = obj_mesh_a['geometry'][filename_uv]['visual'].uv
     uv_b = obj_mesh_b['geometry'][filename_uv]['visual'].uv
+    uvx_a = texture_uv_to_uvx(uv_a, texture_shape)
+    uvx_b = texture_uv_to_uvx(uv_b, texture_shape)
     uv_transform = np.zeros(vertices_b.shape[0], np.int64)
     for face_index in range(0, faces_b.shape[0]):
         for vertex_index in range(0, 3):
@@ -158,9 +167,13 @@ def texture_load_uv(filename_uv):
     mesh_b = mesh_expand(mesh_a, uv_transform, faces_b)
     vertex_faces_a = mesh_a.vertex_faces.copy()
     vertex_faces_b = mesh_b.vertex_faces.copy()
-    vertex_faces_a[vertex_faces_a < 0] = len(faces_a)
-    vertex_faces_b[vertex_faces_b < 0] = len(faces_b)
-    return mesh_uv_descriptor(vertices_a, vertices_b, vertex_faces_a, vertex_faces_b, uv_a, uv_b, faces_a, faces_b, uv_transform)
+    vertex_faces_pad_a = mesh_a.vertex_faces.copy()
+    vertex_faces_pad_b = mesh_b.vertex_faces.copy()
+    vertex_faces_pad_a[vertex_faces_pad_a < 0] = len(faces_a)
+    vertex_faces_pad_b[vertex_faces_pad_b < 0] = len(faces_b)
+    vertex_neighbors_a = mesh_a.vertex_neighbors
+    vertex_neighbors_b = mesh_b.vertex_neighbors
+    return mesh_uv_descriptor(vertices_a, vertices_b, faces_a, faces_b, uv_a, uv_b, uvx_a, uvx_b, texture_shape, uv_transform, vertex_faces_a, vertex_faces_b, vertex_faces_pad_a, vertex_faces_pad_b, vertex_neighbors_a, vertex_neighbors_b)
 
 
 def texture_load_font(font_name, font_size):
@@ -279,8 +292,7 @@ def mesh_expand(mesh, uv_transform, faces_extended, visual=None):
     return mesh_create(mesh.vertices.view(np.ndarray)[uv_transform, :], faces_extended, mesh.vertex_normals, mesh.face_normals, visual)
 
 
-def mesh_faces_of_vertices(mesh, vertex_indices):
-    vertex_faces = mesh.vertex_faces
+def mesh_faces_of_vertices(vertex_faces, vertex_indices):
     face_indices = set()
     for vertex_index in vertex_indices:
         face_indices.update(vertex_faces[vertex_index, :])
@@ -288,8 +300,7 @@ def mesh_faces_of_vertices(mesh, vertex_indices):
     return face_indices
 
 
-def mesh_vertices_of_faces(mesh, face_indices):
-    faces = mesh.faces.view(np.ndarray)
+def mesh_vertices_of_faces(faces, face_indices):
     vertex_indices = set()
     for face_index in face_indices:
         vertex_indices.update(faces[face_index])
@@ -306,22 +317,20 @@ def mesh_closest(mesh, origin):
     return (point, tid[0], distance[0]) if (len(tid) > 0) else (None, None, None) # tuple return
 
 
-def mesh_align_prior(mesh, face_index, align_axis, align_axis_fallback, tolerance=0):
-    align_normal = mesh.face_normals[np.newaxis, face_index, :]
+def mesh_align_prior(face_normals, face_index, align_axis, align_axis_fallback, tolerance=0):
+    align_normal = face_normals[np.newaxis, face_index, :]
     align_prior, nap = math_normalize(align_axis - (align_normal @ align_axis.T) * align_normal)
     return align_prior if (nap > tolerance) else math_normalize(align_axis_fallback - (align_normal @ align_axis_fallback.T) * align_normal)[0]
 
 
-def mesh_snap_to_vertex(mesh, point, face_index):
-    vertex_indices = mesh.faces.view(np.ndarray)[face_index]
-    vertices = mesh.vertices.view(np.ndarray)[vertex_indices, :]
+def mesh_snap_to_vertex(vertices, faces, point, face_index):
+    vertex_indices = faces[face_index]
+    vertices = vertices[vertex_indices, :]
     distances = np.linalg.norm(point - vertices, axis=1)
     return np.argmin(distances)
 
 
-def mesh_select_vertices(mesh, origin_vertex_index, radius, level):
-    vertices  = mesh.vertices.view(np.ndarray)
-    neighbors = mesh.vertex_neighbors
+def mesh_select_vertices(vertices, neighbors, origin_vertex_index, radius, level):
     buffer    = collections.deque()
     distances = {origin_vertex_index : 0}
 
@@ -341,9 +350,7 @@ def mesh_select_vertices(mesh, origin_vertex_index, radius, level):
     return distances
 
 
-def mesh_select_complete_faces(mesh, vertex_indices):
-    vertex_faces = mesh.vertex_faces
-    faces = mesh.faces.view(np.ndarray)
+def mesh_select_complete_faces(faces, vertex_faces, vertex_indices):
     face_indices_seen = set()
     face_indices_complete = set()
     vertex_indices_complete = set()
@@ -368,10 +375,9 @@ def mesh_to_renderer(mesh):
 
 
 class mesh_neighborhood_builder:
-    def __init__(self, mesh):
-        self._mesh = mesh
-        self._mesh_faces = self._mesh.faces.view(np.ndarray)
-        self._mesh_vertex_faces = self._mesh.vertex_faces
+    def __init__(self, faces, vertex_faces):
+        self._mesh_faces = faces
+        self._mesh_vertex_faces = vertex_faces
         self._seen_face = set()
         self._seen_vertex = set()
         self._iterations = 0
@@ -403,8 +409,8 @@ class mesh_neighborhood_processor_command:
 
 
 class mesh_neighborhood_processor:
-    def __init__(self, mesh, faces, callback):
-        self._mnb = mesh_neighborhood_builder(mesh)
+    def __init__(self, mesh_faces, vertex_faces, faces, callback):
+        self._mnb = mesh_neighborhood_builder(mesh_faces, vertex_faces)
         self._faces = faces
         self._expand_faces = set()
         self._ignore_faces = set()
@@ -730,21 +736,21 @@ class paint_decal_solid:
         return call(mesh_vertices, face_normal, origin, indices_vertices, indices_uvx, pixels_dst, weights_src, level)
 
 
-def painter_create_color(mesh_a, mesh_b, mesh_uvx, uv_transform, face_index, origin, color, tolerance=0, fixed=False):
-    mno = mesh_neighborhood_operation_color(mesh_b.vertices.view(np.ndarray), mesh_b.faces.view(np.ndarray), mesh_uvx, color, tolerance)
-    mnp = mesh_neighborhood_processor(mesh_a, {face_index}, mno.paint) if (not fixed) else mesh_list_processor(face_index, mno.paint)
+def painter_create_color(faces_a, vertex_faces_a, vertices_b, faces_b, face_normals, mesh_uvx, uv_transform, face_index, origin, color, tolerance=0, fixed=False):
+    mno = mesh_neighborhood_operation_color(vertices_b, faces_b, mesh_uvx, color, tolerance)
+    mnp = mesh_neighborhood_processor(faces_a, vertex_faces_a, {face_index}, mno.paint) if (not fixed) else mesh_list_processor(face_index, mno.paint)
     return mnp
 
 
-def painter_create_brush(mesh_a, mesh_b, mesh_uvx, uv_transform, face_index, origin, brush, tolerance=0):
-    mno = mesh_neighborhood_operation_brush(mesh_b.vertices.view(np.ndarray), mesh_b.faces.view(np.ndarray), mesh_uvx, origin, brush, tolerance)
-    mnp = mesh_neighborhood_processor(mesh_a, {face_index}, mno.paint)
+def painter_create_brush(faces_a, vertex_faces_a, vertices_b, faces_b, face_normals, mesh_uvx, uv_transform, face_index, origin, brush, tolerance=0):
+    mno = mesh_neighborhood_operation_brush(vertices_b, faces_b, mesh_uvx, origin, brush, tolerance)
+    mnp = mesh_neighborhood_processor(faces_a, vertex_faces_a, {face_index}, mno.paint)
     return mnp
 
 
-def painter_create_decal(mesh_a, mesh_b, mesh_uvx, uv_transform, face_index, origin, decal, tolerance=0):
-    mno = mesh_neighborhood_operation_decal(mesh_b.vertices.view(np.ndarray), mesh_b.faces.view(np.ndarray), mesh_b.face_normals, mesh_uvx, uv_transform, origin, decal, tolerance)
-    mnp = mesh_neighborhood_processor(mesh_a, {face_index}, mno.paint)
+def painter_create_decal(faces_a, vertex_faces_a, vertices_b, faces_b, face_normals, mesh_uvx, uv_transform, face_index, origin, decal, tolerance=0):
+    mno = mesh_neighborhood_operation_decal(vertices_b, faces_b, face_normals, mesh_uvx, uv_transform, origin, decal, tolerance)
+    mnp = mesh_neighborhood_processor(faces_a, vertex_faces_a, {face_index}, mno.paint)
     return mnp
 
 
@@ -835,17 +841,17 @@ class mesh_paint:
     def decal_delete(self, decal_id):
         self._decals.pop(decal_id)
 
-    def task_create_paint_color(self, task_id, mesh_a, mesh_b, face_index, origin, color_idx, tolerance=0, fixed=False):
+    def task_create_paint_color(self, task_id, faces_a, vertex_faces_a, vertices_b, faces_b, face_normals, face_index, origin, color_idx, tolerance=0, fixed=False):
         o = self._colors[color_idx].paint
-        self._tasks[task_id] = painter_create_color(mesh_a, mesh_b, self._uvx, self._uv_transform, face_index, origin, o, tolerance, fixed)
+        self._tasks[task_id] = painter_create_color(faces_a, vertex_faces_a, vertices_b, faces_b, face_normals, self._uvx, self._uv_transform, face_index, origin, o, tolerance, fixed)
 
-    def task_create_paint_brush(self, task_id, mesh_a, mesh_b, face_index, origin, brush_idx, tolerance=0):
+    def task_create_paint_brush(self, task_id, faces_a, vertex_faces_a, vertices_b, faces_b, face_normals, face_index, origin, brush_idx, tolerance=0):
         o = self._brushes[brush_idx].paint
-        self._tasks[task_id] = painter_create_brush(mesh_a, mesh_b, self._uvx, self._uv_transform, face_index, origin, o, tolerance)
+        self._tasks[task_id] = painter_create_brush(faces_a, vertex_faces_a, vertices_b, faces_b, face_normals, self._uvx, self._uv_transform, face_index, origin, o, tolerance)
         
-    def task_create_paint_decal(self, task_id, mesh_a, mesh_b, face_index, origin, decal_idx, tolerance=0):
+    def task_create_paint_decal(self, task_id, faces_a, vertex_faces_a, vertices_b, faces_b, face_normals, face_index, origin, decal_idx, tolerance=0):
         o = self._decals[decal_idx].paint
-        self._tasks[task_id] = painter_create_decal(mesh_a, mesh_b, self._uvx, self._uv_transform, face_index, origin, o, tolerance)
+        self._tasks[task_id] = painter_create_decal(faces_a, vertex_faces_a, vertices_b, faces_b, face_normals, self._uvx, self._uv_transform, face_index, origin, o, tolerance)
 
     def task_execute(self, task_id, timeout, steps=1):
         return self._tasks[task_id].invoke_timeslice(timeout, steps)
@@ -873,7 +879,7 @@ class mesh_paint:
                 if (kind == mesh_paint.LAYER_KIND_COLOR):
                     self._render_target[:, :, :] = np.array(Image.alpha_composite(Image.fromarray(self._render_target), Image.fromarray(self._layers[key])))
                 elif (kind == mesh_paint.LAYER_KIND_SCALE):
-                    cv2.multiply(self._render_target, self._layers[key], self._render_target, 1/255)
+                    cv2.multiply(self._render_target, self._layers[key], self._render_target, 1 / 255)
         if (force_alpha is not None):
             self._render_target[:, :, 3] = force_alpha
 
@@ -882,10 +888,10 @@ class mesh_paint_single_pass(mesh_paint):
     def __init__(self, uvx, render_target, uv_transform):
         super().__init__(uvx, render_target, uv_transform)
 
-    def paint_color_solid(self, mesh_a, mesh_b, face_index, point, color, stop_level, tolerance=0, fixed=False, layer_id=0, timeout=0.05, steps=1):
+    def paint_color_solid(self, faces_a, vertex_faces_a, vertices_b, faces_b, face_normals, face_index, point, color, stop_level, tolerance=0, fixed=False, layer_id=0, timeout=0.05, steps=1):
         d = mesh_paint_descriptor(0, layer_id, 0)
         self.color_create_solid(d.resource_id, color, stop_level, d.layer_id)
-        self.task_create_paint_color(d.task_id, mesh_a, mesh_b, face_index, point, d.resource_id, tolerance, fixed)
+        self.task_create_paint_color(d.task_id, faces_a, vertex_faces_a, vertices_b, faces_b, face_normals, face_index, point, d.resource_id, tolerance, fixed)
         data = self.task_execute(d.task_id, timeout, steps)
         done = self.task_done(d.task_id)
         status = self.task_status(d.task_id)
@@ -893,10 +899,10 @@ class mesh_paint_single_pass(mesh_paint):
         self.color_delete(d.resource_id)
         return mesh_paint_result(done, status, data, layer_id)
     
-    def paint_brush_solid(self, mesh_a, mesh_b, face_index, point, size, color, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1):
+    def paint_brush_solid(self, faces_a, vertex_faces_a, vertices_b, faces_b, face_normals, face_index, point, size, color, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1):
         d = mesh_paint_descriptor(0, layer_id, 1)
         self.brush_create_solid(d.resource_id, size, color, d.layer_id, fill_test)
-        self.task_create_paint_brush(d.task_id, mesh_a, mesh_b, face_index, point, d.resource_id, tolerance)
+        self.task_create_paint_brush(d.task_id, faces_a, vertex_faces_a, vertices_b, faces_b, face_normals, face_index, point, d.resource_id, tolerance)
         data = self.task_execute(d.task_id, timeout, steps)
         done = self.task_done(d.task_id)
         status = self.task_status(d.task_id)
@@ -904,10 +910,10 @@ class mesh_paint_single_pass(mesh_paint):
         self.brush_delete(d.resource_id)
         return mesh_paint_result(done, status, data, layer_id)
     
-    def paint_brush_gradient(self, mesh_a, mesh_b, face_index, point, size, color_center, color_edge, hardness, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1):
+    def paint_brush_gradient(self, faces_a, vertex_faces_a, vertices_b, faces_b, face_normals, face_index, point, size, color_center, color_edge, hardness, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1):
         d = mesh_paint_descriptor(1, layer_id, 2)
         self.brush_create_gradient(d.resource_id, size, color_center, color_edge, hardness, d.layer_id, fill_test)
-        self.task_create_paint_brush(d.task_id, mesh_a, mesh_b, face_index, point, d.resource_id, tolerance)
+        self.task_create_paint_brush(d.task_id, faces_a, vertex_faces_a, vertices_b, faces_b, face_normals, face_index, point, d.resource_id, tolerance)
         data = self.task_execute(d.task_id, timeout, steps)
         done = self.task_done(d.task_id)
         status = self.task_status(d.task_id)
@@ -915,11 +921,11 @@ class mesh_paint_single_pass(mesh_paint):
         self.brush_delete(d.resource_id)
         return mesh_paint_result(done, status, data, layer_id)
     
-    def paint_decal_solid(self, mesh_a, mesh_b, face_index, point, decal, align_prior, angle, scale, double_cover_test=True, fill_test=0.0, tolerance_decal=0, tolerance_paint=0, layer_id=0, timeout=0.05, steps=1):
+    def paint_decal_solid(self, faces_a, vertex_faces_a, vertices_b, faces_b, face_normals, face_index, point, decal, align_prior, angle, scale, double_cover_test=True, fill_test=0.0, tolerance_decal=0, tolerance_paint=0, layer_id=0, timeout=0.05, steps=1):
         d = mesh_paint_descriptor(0, layer_id, 3)
         self.texture_attach(d.resource_id, decal)
         self.decal_create_solid(d.resource_id, align_prior, angle, scale, d.resource_id, d.layer_id, double_cover_test, fill_test, tolerance_decal)
-        self.task_create_paint_decal(d.task_id, mesh_a, mesh_b, face_index, point, d.resource_id, tolerance_paint)
+        self.task_create_paint_decal(d.task_id, faces_a, vertex_faces_a, vertices_b, faces_b, face_normals, face_index, point, d.resource_id, tolerance_paint)
         data = self.task_execute(d.task_id, timeout, steps)
         done = self.task_done(d.task_id)
         status = self.task_status(d.task_id)
@@ -1377,8 +1383,8 @@ class smpl_model:
         self._smpl_to_open_pose = torch.tensor(smpl_model.SMPL_TO_OPENPOSE, dtype=torch.long, device=device)
         self._smpl_faces = torch.tensor(self._smpl_model.faces.reshape((-1,)), dtype=torch.long, device=device)
         self._smpl_uv_transform = torch.tensor(uv_descriptor.uv_transform, dtype=torch.long, device=device)
-        self._smpl_vertex_faces = torch.tensor(uv_descriptor.vertex_faces_a.reshape((-1,)), dtype=torch.long, device=device)
-        self._smpl_vertex_faces_width = uv_descriptor.vertex_faces_a.shape[1]
+        self._smpl_vertex_faces = torch.tensor(uv_descriptor.vertex_faces_pad_a.reshape((-1,)), dtype=torch.long, device=device)
+        self._smpl_vertex_faces_width = uv_descriptor.vertex_faces_pad_a.shape[1]
 
     def to_mesh(self, smpl_params):
         smpl_output = self._smpl_model(**smpl_params)
@@ -1636,10 +1642,11 @@ def renderer_create_settings_smpl_filter_fixed_joints(joint_orientation_map=None
 
 
 class renderer_mesh_identifier:
-    def __init__(self, group, name, kind):
+    def __init__(self, group, name, kind, data):
         self.group = group
         self.name = name
         self.kind = kind
+        self.data = data
 
 
 class renderer_scene_control:
@@ -1718,7 +1725,7 @@ class renderer_scene_control:
         if (previous is not None):
             self._scene.remove_node(previous)
         nodes[name] = self._scene.add(item, 'external@' + group + '@' + name, pose)
-        return renderer_mesh_identifier(group, name, 'external')
+        return renderer_mesh_identifier(group, name, 'external', None)
 
     def group_item_remove(self, item_id):
         nodes = self._groups.get(item_id.group, None)
@@ -1756,15 +1763,8 @@ class renderer_scene_control:
 
 
 class renderer_mesh_control:
-    def __init__(self, uv_descriptor, texture_shape):
-        self._mesh_a_faces = uv_descriptor.faces_a
-        self._mesh_b_faces = uv_descriptor.faces_b
-        self._mesh_a_uv = uv_descriptor.uv_a
-        self._mesh_b_uv = uv_descriptor.uv_b
-        self._uv_transform = uv_descriptor.uv_transform
-        self._mesh_a_uvx = texture_uv_to_uvx(uv_descriptor.uv_a, texture_shape)
-        self._mesh_b_uvx = texture_uv_to_uvx(uv_descriptor.uv_b, texture_shape)
-        self._texture_shape = texture_shape
+    def __init__(self, uv_descriptor: mesh_uv_descriptor):
+        self._uv_set = uv_descriptor
         self._meshes = dict()
         self._cswvfx = dict()
 
@@ -1783,8 +1783,8 @@ class renderer_mesh_control:
         u = g.get(name, None)
         if (u is None):
             target = np.zeros_like(texture)
-            visual = texture_create_visual(self._mesh_b_uv, target)
-            effect = mesh_paint_single_pass(self._mesh_b_uvx, target, self._uv_transform)
+            visual = texture_create_visual(self._uv_set.uv_b, target)
+            effect = mesh_paint_single_pass(self._uv_set.uvx_b, target, self._uv_set.uv_transform)
             effect.layer_create(0)
             effect.layer_enable(0, True)
             g[name] = [visual, effect]
@@ -1795,15 +1795,15 @@ class renderer_mesh_control:
     def mesh_add_smpl(self, group, name, smpl_data, texture, pose):
         self._tvfx_add(group, name, texture)
         visual, effect = self._cswvfx[group][name]
-        mesh_a = mesh_create(smpl_data.vertices,    self._mesh_a_faces, smpl_data.vertex_normals,    smpl_data.face_normals)
-        mesh_b = mesh_create(smpl_data.vertices_uv, self._mesh_b_faces, smpl_data.vertex_normals_uv, smpl_data.face_normals, visual)
+        mesh_a = mesh_create(smpl_data.vertices,    self._uv_set.faces_a, smpl_data.vertex_normals,    smpl_data.face_normals)
+        mesh_b = mesh_create(smpl_data.vertices_uv, self._uv_set.faces_b, smpl_data.vertex_normals_uv, smpl_data.face_normals, visual)
         mesh_c = smpl_mesh_chart_openpose(mesh_a, smpl_data.joints)
         self._mesh_add(group, name, mesh_a, mesh_b, mesh_c, pose)
-        return renderer_mesh_identifier(group, name, 'smpl')
+        return renderer_mesh_identifier(group, name, 'smpl', smpl_data)
 
     def mesh_add_user(self, group, name, mesh, pose):
         self._mesh_add(group, name, mesh, None, None, pose)
-        return renderer_mesh_identifier(group, name, 'user')
+        return renderer_mesh_identifier(group, name, 'user', None)
     
     def mesh_remove_item(self, mesh_id):
         self._meshes[mesh_id.group].pop(mesh_id.name)
@@ -1895,29 +1895,24 @@ class renderer_mesh_control:
         effect.layer_delete(layer_id)
 
     def smpl_paint_color_solid(self, mesh_id, anchor, color, stop_level, tolerance=0, fixed=False, layer_id=0, timeout=0.05, steps=1):
-        mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
         face_index, point = (anchor.face_index, anchor.point) if (not fixed) else (anchor, None)
-        return effect.paint_color_solid(mesh_a, mesh_b, face_index, point, color, stop_level, tolerance, fixed, layer_id, timeout, steps)
+        return effect.paint_color_solid(self._uv_set.faces_a, self._uv_set.vertex_faces_a, mesh_id.data.vertices_uv, self._uv_set.faces_b, mesh_id.data.face_normals, face_index, point, color, stop_level, tolerance, fixed, layer_id, timeout, steps)
     
     def smpl_paint_brush_solid(self, mesh_id, anchor, size, color, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1):
-        mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
-        return effect.paint_brush_solid(mesh_a, mesh_b, anchor.face_index, anchor.point, size, color, fill_test, tolerance, layer_id, timeout, steps)
+        return effect.paint_brush_solid(self._uv_set.faces_a, self._uv_set.vertex_faces_a, mesh_id.data.vertices_uv, self._uv_set.faces_b, mesh_id.data.face_normals, anchor.face_index, anchor.point, size, color, fill_test, tolerance, layer_id, timeout, steps)
     
     def smpl_paint_brush_gradient(self, mesh_id, anchor, size, color_center, color_edge, hardness, fill_test=0.0, tolerance=0, layer_id=0, timeout=0.05, steps=1):
-        mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
-        return effect.paint_brush_gradient(mesh_a, mesh_b, anchor.face_index, anchor.point, size, color_center, color_edge, hardness, fill_test, tolerance, layer_id, timeout, steps)
+        return effect.paint_brush_gradient(self._uv_set.faces_a, self._uv_set.vertex_faces_a, mesh_id.data.vertices_uv, self._uv_set.faces_b, mesh_id.data.face_normals, anchor.face_index, anchor.point, size, color_center, color_edge, hardness, fill_test, tolerance, layer_id, timeout, steps)
     
     def smpl_paint_decal_solid(self, mesh_id, anchor, decal, align_prior, angle, scale, double_cover_test=True, fill_test=0.0, tolerance_decal=0, tolerance_paint=0, layer_id=0, timeout=0.05, steps=1):
-        mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
-        return effect.paint_decal_solid(mesh_a, mesh_b, anchor.face_index, anchor.point, decal, align_prior, angle, scale, double_cover_test, fill_test, tolerance_decal, tolerance_paint, layer_id, timeout, steps)
+        return effect.paint_decal_solid(self._uv_set.faces_a, self._uv_set.vertex_faces_a, mesh_id.data.vertices_uv, self._uv_set.faces_b, mesh_id.data.face_normals, anchor.face_index, anchor.point, decal, align_prior, angle, scale, double_cover_test, fill_test, tolerance_decal, tolerance_paint, layer_id, timeout, steps)
     
     def smpl_paint_decal_align_prior(self, mesh_id, anchor, align_axis, align_axis_fallback, tolerance=0):
-        mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
-        return mesh_align_prior(mesh_a, anchor.face_index, align_axis, align_axis_fallback, tolerance)
+        return mesh_align_prior(mesh_id.data.face_normals, anchor.face_index, align_axis, align_axis_fallback, tolerance)
     
     def smpl_paint_clear(self, mesh_id, color=0):
         visual, effect = self._cswvfx[mesh_id.group][mesh_id.name]
@@ -2089,8 +2084,8 @@ class renderer:
         self._scene_control = renderer_scene_control(settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp)
 
     def smpl_load_model(self, filename_uv, texture_shape, model_path, num_betas, device):
-        uv_descriptor = texture_load_uv(filename_uv)
-        self._mesh_control = renderer_mesh_control(uv_descriptor, texture_shape)
+        uv_descriptor = texture_load_uv(filename_uv, texture_shape)
+        self._mesh_control = renderer_mesh_control(uv_descriptor)
         self._smpl_control = renderer_smpl_control(uv_descriptor, model_path, num_betas, device)        
 
     def smpl_filter_reset(self):
