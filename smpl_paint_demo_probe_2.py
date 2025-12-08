@@ -25,7 +25,7 @@ class demo:
         # Settings ------------------------------------------------------------
         self._device = 'cuda'
 
-        self._smpl_dataset_path = 'C:/Users/jcds/Desktop/data_dump'
+        self._smpl_dataset_path = './data/data_dump'
         self._smpl_model_path = './data/smpl/SMPL_NEUTRAL.pkl'
         self._smpl_uv_path = './data/smpl_uv.obj'
         self._smpl_texture_path = './data/textures/f_01_alb.002_1k.png'
@@ -68,10 +68,9 @@ class demo:
         cfg_camera = smplpact.renderer_create_settings_camera(fxy, fxy, self._viewport_width // 2, self._viewport_height // 2)
         cfg_camera_transform = smplpact.renderer_create_settings_camera_transform()
         cfg_lamp = smplpact.renderer_create_settings_lamp()
-        cfg_smpl_model = smplpact.renderer_create_settings_smpl_model(self._smpl_model_path, 10, self._device)
-        cfg_smpl_uv = smplpact.renderer_create_settings_smpl_uv(self._smpl_uv_path, self._texture_array.shape)
+        cfg_smpl_model = smplpact.renderer_create_settings_smpl_model(self._smpl_uv_path, self._texture_array.shape, self._smpl_model_path, 10, self._device)
 
-        self._offscreen_renderer = smplpact.renderer_context(cfg_offscreen, cfg_scene, cfg_camera, cfg_camera_transform, cfg_lamp, cfg_smpl_model, cfg_smpl_uv)
+        self._offscreen_renderer = smplpact.renderer_context(cfg_offscreen, cfg_scene, cfg_camera, cfg_camera_transform, cfg_lamp, cfg_smpl_model)
         
         # Create UI elements
         self._cursor_mesh = trimesh.creation.icosphere(radius=self._cursor_radius)
@@ -127,48 +126,15 @@ class demo:
         # SMPL params to mesh
         smpl_params, smpl_K = self._offscreen_renderer.smpl_unpack(self._pose_message)
         smpl_ok, smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, smpl_K.T, self._realsense_K.T)
-        smpl_vertices = smpl_result.vertices[0]
-        smpl_joints = smpl_result.joints[0]
-        smpl_faces = smpl_result.faces
-        smpl_face_normals = smpl_result.face_normals[0]
-
-        #smpl_face_v = smpl_vertices[smpl_faces.reshape((-1)), :].reshape((smpl_faces.shape[0], 3, 3))
-        #smpl_face_d = smpl_face_v[:, 1:3, :] - smpl_face_v[:, 0:1, :]        
-        #smpl_face_n = np.cross(smpl_face_d[:, 0, :], smpl_face_d[:, 1, :])
-        #smpl_face_n = smpl_face_n / np.expand_dims(np.linalg.norm(smpl_face_n, axis=-1), axis=-1)
-
-        #print(smpl_vertices[0:2, :])
-        #print(smpl_face_v[0:2, :, :])
-        #print(smpl_face_d[0:2, :, :])
+        smpl_data = smpl_result.at(0)        
         
-        #print(vertices[0, 0:2, :])
-        #print(vertices.shape)
-        #face_vertices = vertices[faces.reshape((-1,)), :].reshape((faces.shape[0], 3, 3))
-        #print(face_vertices[0, 0:2, :, :])
-        #print(face_bases[0, 0:2, :, :])
-
-        self._offscreen_renderer._mesh_control._mesh_a_cache['face_normals'] = smpl_face_normals
-        smpl_mesh = smplpact.mesh_create(smpl_vertices, smpl_faces, smpl_face_normals, cache=self._offscreen_renderer._mesh_control._mesh_a_cache)
-
-        #print('CMP')
-        #print(smpl_vertices.dtype)
-        #print(smpl_joints.dtype)
-        #print(smpl_faces.dtype)
-        #print(smpl_face_normals.dtype)
-
-        #print(smpl_mesh.face_normals[1:2, :])
-        #print(smpl_mesh.face_normals.dtype)
-        #print(smpl_face_normals[1:2, :])
-        #print(smpl_face_normals.dtype)
-        #print(smpl_face_n[1:2, :])
-        #print(smpl_face_n.dtype)
-
         # Compute pose to set mesh upright
         # Poses convert from object to world
-        smpl_mesh_pose = np.linalg.inv(smplpact.smpl_mesh_chart_openpose(smpl_mesh, smpl_joints).create_frame('body_center').to_pose()).T
+        smpl_mesh = smplpact.mesh_create(smpl_data.vertices, smpl_data.faces, smpl_data.face_normals)
+        smpl_mesh_pose = smplpact.math_invert_pose(smplpact.smpl_mesh_chart_openpose(smpl_mesh, smpl_data.joints).create_frame('body_center').to_pose()).T
 
         # Add SMPL mesh to the main scene
-        smpl_mesh_id = self._offscreen_renderer.mesh_add_smpl('smpl', 'patient', smpl_mesh, smpl_joints, self._texture_array, smpl_mesh_pose)
+        smpl_mesh_id = self._offscreen_renderer.mesh_add_smpl('smpl', 'patient', smpl_data, self._texture_array, smpl_mesh_pose)
 
         # Set probe position
         probe_hand = self._probe_message['hand_position']
@@ -204,12 +170,12 @@ class demo:
         cv2.imshow('SMPL Paint Demo', cv2.cvtColor(color, cv2.COLOR_RGB2BGR))
 
         # Draw probe
-        #probe_image = (probe_position / probe_position[:, 2:3]) @ self._realsense_K.T
-        #center = (int(probe_image[0, 0]), int(probe_image[0, 1]))
-        #cv2.circle(self._realsense_image, center, self._probe_image_radius, self._probe_image_color, self._probe_image_thickness)
+        probe_image = (probe_position / probe_position[:, 2:3]) @ self._realsense_K.T
+        center = (int(probe_image[0, 0]), int(probe_image[0, 1]))
+        cv2.circle(self._realsense_image, center, self._probe_image_radius, self._probe_image_color, self._probe_image_thickness)
 
         # Show image
-        #cv2.imshow('RealSense', self._realsense_image)
+        cv2.imshow('RealSense', self._realsense_image)
 
         # Process keyboard input
         key = cv2.waitKey(1) & 0xFF
