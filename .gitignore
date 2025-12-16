@@ -10,3 +10,5 @@ data/smpl_vert_segmentation.json
 smpl_notes.txt
 /data/data_dump
 /data/Oct_22_stevens
+/alpha_1.0
+/alpha_0.25
