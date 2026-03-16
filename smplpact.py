@@ -1381,7 +1381,7 @@ class smpl_model:
     def __init__(self, uv_descriptor, model_path, num_betas, device):
         self._smpl_model = smplx.SMPLLayer(model_path=model_path, num_betas=num_betas).to(device)
         self._smpl_to_open_pose = torch.tensor(smpl_model.SMPL_TO_OPENPOSE, dtype=torch.long, device=device)
-        self._smpl_faces = torch.tensor(self._smpl_model.faces.reshape((-1,)), dtype=torch.long, device=device)
+        self._smpl_faces = torch.tensor(self._smpl_model.faces.reshape((-1,)).astype(np.int32), dtype=torch.long, device=device)
         self._smpl_uv_transform = torch.tensor(uv_descriptor.uv_transform, dtype=torch.long, device=device)
         self._smpl_vertex_faces = torch.tensor(uv_descriptor.vertex_faces_pad_a.reshape((-1,)), dtype=torch.long, device=device)
         self._smpl_vertex_faces_width = uv_descriptor.vertex_faces_pad_a.shape[1]
