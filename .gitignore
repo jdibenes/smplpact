@@ -14,3 +14,6 @@ smpl_notes.txt
 /alpha_0.25
 data/textures/f_01_alb.002_512.png
 data/patient_pose_raw.json
+data/smpl/SMPL_FEMALE.pkl
+data/smpl/SMPL_MALE.pkl
+data/textures/g.png
