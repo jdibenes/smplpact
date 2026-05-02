@@ -119,57 +119,59 @@ class demo:
         # True by default, can be toggled off via curses menu
         self._enable_pose_estimation = True
 
+        self._last_valid_pose = None
+        self._smpl_empty_reload = 5
+        self._smpl_empty_counter = 5
+        self._rotate_image_code = 0
+
     def _render_body_mesh(self, pose: dict):
-        person_list = pose['persons']
-
-        smpl_params, smpl_K = self._offscreen_renderer.smpl_unpack(pose)
-        smpl_ok, smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, smpl_K.T, self._realsense_K.T)
-
-        if not smpl_ok:
-            #self._logger.info(f"smpl_ok is not ok")
-            return np.full((self._viewport_height, self._viewport_width), 255, dtype=np.uint8)
-
-        smpl_data = smpl_result.at(0)
+        if (pose['status'] != 'success'):
+            if (self._smpl_empty_counter <= 0):
+                smpl_pose = None
+            else:
+                self._smpl_empty_counter -= 1
+                smpl_pose = self._last_valid_pose
+        else:
+            self._smpl_empty_counter = self._smpl_empty_reload
+            smpl_pose = pose
 
         # Identity pose (from smpl)
         smpl_mesh_pose = np.eye(4, 4, dtype=np.float32)
 
-        # Add SMPL mesh to the main scene
-        smpl_mesh_id = self._offscreen_renderer.mesh_add_smpl('smpl', 'patient', smpl_data, self._texture_array, smpl_mesh_pose)
+        if (smpl_pose is not None):
+            smpl_params, smpl_K = self._offscreen_renderer.smpl_unpack(smpl_pose)
+            smpl_ok, smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, smpl_K.T, self._realsense_K.T)
 
-        # Change focus region when key is pressed
-        # Camera orientation is preserved
-        # Cursor coordinates are reset
-        smpl_next_region = self._smpl_regions[self._smpl_region_index]
+            if (smpl_ok):
+                self._last_valid_pose = smpl_pose
+                smpl_data = smpl_result.at(0)
 
-        if (smpl_next_region != self._smpl_region):
-            smpl_frame = self._offscreen_renderer.smpl_chart_create_frame(smpl_mesh_id, smpl_next_region)
+                # Add SMPL mesh to the main scene
+                smpl_mesh_id = self._offscreen_renderer.mesh_add_smpl('smpl', 'patient', smpl_data, self._texture_array, smpl_mesh_pose)
 
-            focus_center = math_transform_points(smpl_frame.center, smpl_mesh_pose.T, inverse=False)
-            focus_points = math_transform_points(smpl_frame.points, smpl_mesh_pose.T, inverse=False)
-            focus_distance = self._offscreen_renderer.camera_solve_fov_z(focus_center, focus_points)
+                # Finalize SMPL painting
+                # Compute painted texture
+                self._offscreen_renderer.smpl_paint_flush(smpl_mesh_id)
+                # Remove painting for next frame (comment out to keep paintings across frames)
+                self._offscreen_renderer.smpl_paint_clear(smpl_mesh_id)
 
-            self._offscreen_renderer.camera_adjust_parameters(center=focus_center, distance=self._camera_focus_factor * focus_distance, relative=False)
-            self._cursor_offset = 0
-            self._cursor_angle = 0
-            self._smpl_region = smpl_next_region
-
-        # Finalize SMPL painting
-        # Compute painted texture
-        self._offscreen_renderer.smpl_paint_flush(smpl_mesh_id)
-        # Remove painting for next frame (comment out to keep paintings across frames)
-        self._offscreen_renderer.smpl_paint_clear(smpl_mesh_id)
-
-        # Finalize mesh processing
-        self._offscreen_renderer.mesh_present(smpl_mesh_id)
-
+                # Finalize mesh processing
+                self._offscreen_renderer.mesh_present(smpl_mesh_id)
+        
         # Render
         color, depth = self._offscreen_renderer.scene_render()
-        self._smpl_mesh_id = smpl_mesh_id
-
+        self._offscreen_renderer.mesh_remove_all()
         color = color.copy()
 
         color = cv2.cvtColor(color, cv2.COLOR_RGB2BGR)
+        if (self._rotate_image_code == 0):
+            pass
+        elif (self._rotate_image_code == 1):
+            color = cv2.rotate(color, cv2.ROTATE_90_CLOCKWISE)
+        elif (self._rotate_image_code == 2):
+            color = cv2.rotate(color, cv2.ROTATE_180)
+        elif (self._rotate_image_code == 3):
+            color = cv2.rotate(color, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
         return color
 
@@ -180,7 +182,23 @@ if __name__ == "__main__":
     smpl_message_path = os.path.join('./data/data_dump/1', 'patient_pose_raw.json')
     with open(smpl_message_path, 'rt') as json_file:
         pose_message = json.load(json_file)
-    with x._offscreen_renderer:
-        color = x._render_body_mesh(pose_message)
-    cv2.imshow("image", color)
-    cv2.waitKey(0)
+
+    index = 0
+    pose_message['status'] = 'success'
+
+    while (True):
+        if ((index % 101) == 50):
+            pose_message['status'] = 'error'
+            print('KILL')
+        if ((index % 101) == 100):
+            pose_message['status'] = 'success'
+            print('RESTORE')
+        index += 1
+
+        with x._offscreen_renderer:
+            color = x._render_body_mesh(pose_message)
+        cv2.imshow("image", color)
+        key = cv2.waitKey(33) & 0xFF
+        if (key == 27):
+            break
+
