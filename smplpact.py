@@ -1381,7 +1381,7 @@ class smpl_model:
     def __init__(self, uv_descriptor, model_path, num_betas, device):
         self._smpl_model = smplx.SMPLLayer(model_path=model_path, num_betas=num_betas).to(device)
         self._smpl_to_open_pose = torch.tensor(smpl_model.SMPL_TO_OPENPOSE, dtype=torch.long, device=device)
-        self._smpl_faces = torch.tensor(self._smpl_model.faces.reshape((-1,)), dtype=torch.long, device=device)
+        self._smpl_faces = torch.tensor(self._smpl_model.faces.reshape((-1,)).astype(np.int32), dtype=torch.long, device=device)
         self._smpl_uv_transform = torch.tensor(uv_descriptor.uv_transform, dtype=torch.long, device=device)
         self._smpl_vertex_faces = torch.tensor(uv_descriptor.vertex_faces_pad_a.reshape((-1,)), dtype=torch.long, device=device)
         self._smpl_vertex_faces_width = uv_descriptor.vertex_faces_pad_a.shape[1]
@@ -1730,7 +1730,7 @@ class renderer_scene_control:
     def group_item_remove(self, item_id):
         nodes = self._groups.get(item_id.group, None)
         if (nodes is not None):
-            item = nodes.get(item_id.name, None)
+            item = nodes.pop(item_id.name, None)
             if (item is not None):
                 self._scene.remove_node(item)
 
@@ -1810,11 +1810,15 @@ class renderer_mesh_control:
         self._mesh_add(group, name, mesh, None, None, pose)
         return renderer_mesh_identifier(group, name, 'user', None)
     
+    def mesh_add_pyro(self, group, name, mesh, pose):
+        self._mesh_add(group, name, mesh, None, None, pose)
+        return renderer_mesh_identifier(group, name, 'pyro', None)
+
     def mesh_remove_item(self, mesh_id):
-        self._meshes[mesh_id.group].pop(mesh_id.name)
+        self._meshes.get(mesh_id.group, dict()).pop(mesh_id.name, None)
 
     def mesh_remove_group(self, group):
-        self._meshes.pop(group)
+        self._meshes.pop(group, None)
 
     def mesh_remove_all(self):
         self._meshes.clear()
@@ -2150,6 +2154,10 @@ class renderer:
     def mesh_add_user(self, group, name, mesh, pose) -> renderer_mesh_identifier:
         return self._mesh_control.mesh_add_user(group, name, mesh, pose)
 
+    def mesh_add_pointcloud(self, group, name, points, colors, pose) -> renderer_mesh_identifier:
+        mesh = pyrender.Mesh.from_points(points, colors)
+        return self._mesh_control.mesh_add_pyro(group, name, mesh, pose)
+
     def mesh_set_pose(self, mesh_id, pose):
         self._mesh_control.mesh_set_pose(mesh_id, pose)
         self._scene_control.group_item_set_pose(mesh_id, pose)
@@ -2160,7 +2168,7 @@ class renderer:
     def mesh_present(self, mesh_id):
         mesh = self._mesh_control.mesh_get_full(mesh_id) if (mesh_id.kind == 'smpl') else self._mesh_control.mesh_get_base(mesh_id)
         pose = self._mesh_control.mesh_get_pose(mesh_id)
-        item = mesh_to_renderer(mesh)
+        item = mesh if (mesh_id.kind == 'pyro') else mesh_to_renderer(mesh)
         self._scene_control.group_item_add(mesh_id.group, mesh_id.name, item, pose)
 
     def mesh_remove_item(self, mesh_id):
