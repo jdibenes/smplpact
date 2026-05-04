@@ -1725,7 +1725,10 @@ class renderer_scene_control:
                 self.group_item_set_visible(renderer_mesh_identifier(group, name), False)
         composite_color = None
         for layer in layers:
-            for mesh_id in layer:
+            active = [mesh_id for mesh_id in layer if self.group_item_exists(mesh_id)]
+            if (len(active) <= 0):
+                continue
+            for mesh_id in active:
                 self.group_item_set_visible(mesh_id, visible_restore[mesh_id.group][mesh_id.name])
             color, depth = self.render()
             if (composite_color is not None):
@@ -1733,12 +1736,12 @@ class renderer_scene_control:
                 composite_color[mask, :] = color[mask, :]
             else:
                 composite_color = color.copy()
-            for mesh_id in layer:
+            for mesh_id in active:
                 self.group_item_set_visible(mesh_id, False)
         for group in visible_restore.keys():
             for name in visible_restore[group].keys():
                 self.group_item_set_visible(renderer_mesh_identifier(group, name), visible_restore[group][name])
-        return (composite_color, None) # tuple return
+        return (composite_color, None) if (composite_color is not None) else self.render() # tuple return
     
     def group_item_add(self, group, name, item, pose=None):
         nodes = self._groups.get(group, None)
