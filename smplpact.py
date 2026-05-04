@@ -1716,6 +1716,30 @@ class renderer_scene_control:
         color, depth = self._renderer.render(self._scene, pyrender.RenderFlags.RGBA)
         return (color, depth) # tuple return
 
+    def render_composite(self, layers):
+        visible_restore = dict()
+        for group in self.group_enumerate():
+            visible_restore[group] = dict()
+            for name in self.group_item_enumerate(group):
+                visible_restore[group][name] = self.group_item_get_visible(renderer_mesh_identifier(group, name))
+                self.group_item_set_visible(renderer_mesh_identifier(group, name), False)
+        composite_color = None
+        for layer in layers:
+            for mesh_id in layer:
+                self.group_item_set_visible(mesh_id, visible_restore[mesh_id.group][mesh_id.name])
+            color, depth = self.render()
+            if (composite_color is not None):
+                mask = depth > 0 
+                composite_color[mask, :] = color[mask, :]
+            else:
+                composite_color = color.copy()
+            for mesh_id in layer:
+                self.group_item_set_visible(mesh_id, False)
+        for group in visible_restore.keys():
+            for name in visible_restore[group].keys():
+                self.group_item_set_visible(renderer_mesh_identifier(group, name), visible_restore[group][name])
+        return (composite_color, None) # tuple return
+    
     def group_item_add(self, group, name, item, pose=None):
         nodes = self._groups.get(group, None)
         if (nodes is None):
@@ -2187,6 +2211,9 @@ class renderer:
     
     def scene_render(self):
         return self._scene_control.render()
+    
+    def scene_render_composite(self, layers):
+        return self._scene_control.render_composite(layers)
     
     def mesh_add_smpl(self, group, name, smpl_data, texture, pose) -> renderer_mesh_identifier:
         return self._mesh_control.mesh_add_smpl(group, name, smpl_data, texture, pose)
