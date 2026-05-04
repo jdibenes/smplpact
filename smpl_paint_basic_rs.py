@@ -66,9 +66,10 @@ class demo:
         print(f'Using device: {self._device}')
         print(f'SMPL texture shape: {self._texture_array.shape}')
 
-        self._point_cloud_points = np.random.uniform(size=(100, 3))
+        pc_size = 1000
+        self._point_cloud_points = np.random.uniform(size=(pc_size, 3))
         self._point_cloud_points[:, 2] += 1
-        self._point_cloud_colors = np.random.uniform(size=(100, 3))
+        self._point_cloud_colors = np.random.uniform(size=(pc_size, 3))
 
         # Run inference and painting
         start = time.perf_counter()
@@ -120,7 +121,8 @@ class demo:
         self._offscreen_renderer.mesh_present(world_mesh_id)
 
         # Render
-        color, depth = self._offscreen_renderer.scene_render()
+        color, _ = self._offscreen_renderer.scene_render_composite([[world_mesh_id],[smpl_mesh_id]])
+        self._offscreen_renderer.mesh_remove_all()
 
         # Show rendered image
         cv2.imshow('SMPL Paint Demo', cv2.cvtColor(color, cv2.COLOR_RGB2BGR))
