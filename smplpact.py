@@ -1642,7 +1642,7 @@ def renderer_create_settings_smpl_filter_fixed_joints(joint_orientation_map=None
 
 
 class renderer_mesh_identifier:
-    def __init__(self, group, name, kind, data):
+    def __init__(self, group, name, kind=None, data=None):
         self.group = group
         self.name = name
         self.kind = kind
@@ -1727,12 +1727,22 @@ class renderer_scene_control:
         nodes[name] = self._scene.add(item, 'external@' + group + '@' + name, pose)
         return renderer_mesh_identifier(group, name, 'external', None)
 
+    def group_item_exists(self, item_id):
+        nodes = self._groups.get(item_id.group, None)
+        if (nodes is not None):
+            item = nodes.get(item_id.name, None)
+            if (item is not None):
+                return True
+        return False
+
     def group_item_remove(self, item_id):
         nodes = self._groups.get(item_id.group, None)
         if (nodes is not None):
             item = nodes.pop(item_id.name, None)
             if (item is not None):
                 self._scene.remove_node(item)
+                if (len(nodes) <= 0):
+                    self._groups.pop(item_id.group)
 
     def group_item_set_pose(self, item_id, pose):
         nodes = self._groups.get(item_id.group, None)
@@ -1749,11 +1759,32 @@ class renderer_scene_control:
                 return self._scene.get_pose(item)
         return None
 
+    def group_item_set_visible(self, item_id, visible):
+        nodes = self._groups.get(item_id.group, None)
+        if (nodes is not None):
+            item = nodes.get(item_id.name, None)
+            if (item is not None):
+                item.mesh.is_visible = visible
+    
+    def group_item_get_visible(self, item_id):
+        nodes = self._groups.get(item_id.group, None)
+        if (nodes is not None):
+            item = nodes.get(item_id.name, None)
+            if (item is not None):
+                return item.mesh.is_visible
+        return None
+    
+    def group_item_enumerate(self, group):
+        return list(self._groups.get(group, dict()).keys())
+
     def group_clear(self, group):
         nodes = self._groups.pop(group, None)
         if (nodes is not None):
             for name, item in nodes.items():
                 self._scene.remove_node(item)
+
+    def group_enumerate(self):
+        return list(self._groups.keys())
 
     def clear(self):
         for nodes in self._groups.values():
@@ -1814,6 +1845,9 @@ class renderer_mesh_control:
         self._mesh_add(group, name, mesh, None, None, pose)
         return renderer_mesh_identifier(group, name, 'pyro', None)
 
+    def mesh_exists_item(self, mesh_id):
+        return self._meshes.get(mesh_id.group, dict()).get(mesh_id.name, None) is not None
+
     def mesh_remove_item(self, mesh_id):
         self._meshes.get(mesh_id.group, dict()).pop(mesh_id.name, None)
 
@@ -1822,6 +1856,12 @@ class renderer_mesh_control:
 
     def mesh_remove_all(self):
         self._meshes.clear()
+    
+    def mesh_enumerate_item(self, group):
+        return list(self._meshes.get(group, dict()).keys())
+    
+    def mesh_enumerate_group(self):
+        return list(self._meshes.keys())
     
     def mesh_get_base(self, mesh_id):
         return self._meshes[mesh_id.group][mesh_id.name][0]
@@ -2157,6 +2197,12 @@ class renderer:
     def mesh_add_pointcloud(self, group, name, points, colors, pose) -> renderer_mesh_identifier:
         mesh = pyrender.Mesh.from_points(points, colors)
         return self._mesh_control.mesh_add_pyro(group, name, mesh, pose)
+    
+    def mesh_status(self, mesh_id):
+        s = dict()
+        s['registered'] = self._mesh_control.mesh_exists_item(mesh_id)
+        s['presented'] = self._scene_control.group_item_exists(mesh_id)
+        return s
 
     def mesh_set_pose(self, mesh_id, pose):
         self._mesh_control.mesh_set_pose(mesh_id, pose)
@@ -2164,6 +2210,12 @@ class renderer:
 
     def mesh_get_pose(self, mesh_id):
         return self._mesh_control.mesh_get_pose(mesh_id)
+    
+    def mesh_set_visible(self, mesh_id, visible):
+        self._scene_control.group_item_set_visible(mesh_id, visible)
+
+    def mesh_get_visible(self, mesh_id):
+        return self._scene_control.group_item_get_visible(mesh_id)
 
     def mesh_present(self, mesh_id):
         mesh = self._mesh_control.mesh_get_full(mesh_id) if (mesh_id.kind == 'smpl') else self._mesh_control.mesh_get_base(mesh_id)
