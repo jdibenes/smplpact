@@ -3,6 +3,7 @@
 #==============================================================================
 
 import os
+import threading
 import time
 import math
 import collections
@@ -368,10 +369,6 @@ def mesh_select_complete_faces(faces, vertex_faces, vertex_indices):
                     vertex_indices_complete.update(face_vertices)
     
     return (face_indices_complete, vertex_indices_complete) # tuple return
-
-
-def mesh_to_renderer(mesh):
-    return pyrender.Mesh.from_trimesh(mesh)
 
 
 class mesh_neighborhood_builder:
@@ -1999,7 +1996,7 @@ class renderer_mesh_control:
         effect.flush(force_alpha)
 
 
-# TODO: Multiple meshes
+# TODO: multiple meshes
 class renderer_smpl_control:
     def __init__(self, uv_descriptor, model_path, num_betas, device):
         self._device = torch.device(device)
@@ -2225,7 +2222,7 @@ class renderer:
         return self._mesh_control.mesh_add_user(group, name, mesh, pose)
 
     def mesh_add_pointcloud(self, group, name, points, colors, pose) -> renderer_mesh_identifier:
-        mesh = pyrender.Mesh.from_points(points, colors)
+        mesh = (points, colors, None)
         return self._mesh_control.mesh_add_pyro(group, name, mesh, pose)
     
     def mesh_status(self, mesh_id):
@@ -2250,7 +2247,7 @@ class renderer:
     def mesh_present(self, mesh_id):
         mesh = self._mesh_control.mesh_get_full(mesh_id) if (mesh_id.kind == 'smpl') else self._mesh_control.mesh_get_base(mesh_id)
         pose = self._mesh_control.mesh_get_pose(mesh_id)
-        item = mesh if (mesh_id.kind == 'pyro') else mesh_to_renderer(mesh)
+        item = pyrender.Mesh.from_points(mesh[0], mesh[1], mesh[2]) if (mesh_id.kind == 'pyro') else pyrender.Mesh.from_trimesh(mesh)
         self._scene_control.group_item_add(mesh_id.group, mesh_id.name, item, pose)
 
     def mesh_remove_item(self, mesh_id):
@@ -2332,6 +2329,45 @@ class renderer:
         self._mesh_control.smpl_paint_flush(mesh_id, force_alpha)
 
 
+class context_thread:
+    def __init__(self, daemon=False):
+        self._din = threading.Condition()
+        self._dout = threading.Condition()
+        self._in_args = list()
+        self._in_keywords = dict()
+        self._task = None
+        self._out = None       
+        self._thread = threading.Thread(target=self._main_loop, daemon=daemon)
+        self._run = False
+        
+    def _main_loop(self):
+        while (self._run):
+            with (self._din):
+                self._din.wait()
+            self._out = self._task(*self._in_args, **self._in_keywords) if (self._task is not None) else None
+            with (self._dout):
+                self._dout.notify()
+
+    def start(self):
+        self._run = True
+        self._thread.start()
+
+    def call(self, task, /, *args, **keywords):
+        self._in_args = args
+        self._in_keywords = keywords
+        self._task = task
+        with (self._din):
+            self._din.notify()
+        with (self._dout):
+            self._dout.wait()
+        return self._out
+    
+    def stop(self):
+        self._run = False
+        self.call(None)
+        self._thread.join()
+
+
 class renderer_context(renderer):
     def __init__(self, settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp, settings_smpl_model, settings_smpl_filter_bounding_box=None, settings_smpl_filter_forward_face=None, settings_smpl_filter_exponential_single=None, settings_smpl_filter_fixed_joints=None):
         self.__ready = False
@@ -2341,11 +2377,9 @@ class renderer_context(renderer):
         self.__settings_smpl_filter_forward_face = settings_smpl_filter_forward_face if (settings_smpl_filter_forward_face is not None) else renderer_create_settings_smpl_filter_forward_face()
         self.__settings_smpl_filter_exponential_single = settings_smpl_filter_exponential_single if (settings_smpl_filter_exponential_single is not None) else renderer_create_settings_smpl_filter_exponential_single()
         self.__settings_smpl_filter_fixed_joints = settings_smpl_filter_fixed_joints if (settings_smpl_filter_fixed_joints is not None) else renderer_create_settings_smpl_filter_fixed_joints()
+        self.__context_thread = context_thread(True)
 
     def __build(self):
-        if (self.__ready):
-            return
-        
         super().__init__(**self.__settings_renderer)
 
         self.smpl_load_model(**self.__settings_smpl_model)
@@ -2355,12 +2389,19 @@ class renderer_context(renderer):
         self.smpl_filter_set_exponential_single(**self.__settings_smpl_filter_exponential_single)
         self.smpl_filter_set_fixed_joints(**self.__settings_smpl_filter_fixed_joints)
 
-        self.__ready = True
- 
     def __enter__(self):
-        self.__build()
+        if (not self.__ready):
+            self.__context_thread.start()
+            self.__context_thread.call(self.__build)
+            self.__ready = True
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         pass
+
+    def scene_render(self):
+        return self.__context_thread.call(super().scene_render)
+    
+    def scene_render_composite(self, layers):
+        return self.__context_thread.call(super().scene_render_composite, layers)
 
