@@ -1945,6 +1945,18 @@ class renderer_mesh_control:
         local_origin = math_transform_points(origin, pose, True)
         point, face_index, distance, = mesh_closest(mesh_a, local_origin)
         return mesh_chart_point(point, face_index, local_origin, distance, None)
+    
+    def mesh_operation_raycast_camera(self, mesh_id, pose, K, uv1):
+        local_origin = np.zeros((1, 3), dtype=pose.dtype)
+        local_direction = math_normalize(math_transform_K(uv1, K, True))[0]
+        origin = math_transform_points(local_origin, pose, False)
+        direction = math_transform_bearings(local_direction, pose, False)        
+        return self.mesh_operation_raycast(mesh_id, origin, direction)
+    
+    def mesh_operation_closest_camera(self, mesh_id, pose):
+        local_origin = np.zeros((1, 3), dtype=pose.dtype)
+        origin = math_transform_points(local_origin, pose, False)
+        return self.mesh_operation_closest(mesh_id, origin)
 
     def smpl_chart_create_frame(self, mesh_id, region):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
@@ -2269,7 +2281,7 @@ class renderer:
         self._mesh_control = renderer_mesh_control(uv_descriptor)
         self._smpl_control = renderer_smpl_control(uv_descriptor, model_path, num_betas, device)
 
-    def smpl_filter_exists(self, id='patient'):
+    def smpl_filter_exists(self, id='patient') -> bool:
         return self._smpl_control.filter_exists(id)
 
     def smpl_filter_reset(self, align_mode=smpl_camera_align_Rt, id='patient'):
@@ -2378,6 +2390,12 @@ class renderer:
 
     def mesh_operation_closest(self, mesh_id, origin) -> mesh_chart_point:
         return self._mesh_control.mesh_operation_closest(mesh_id, origin)
+    
+    def mesh_operation_raycast_camera(self, mesh_id, pose, K, uv1) -> mesh_chart_point:
+        return self._mesh_control.mesh_operation_raycast_camera(mesh_id, pose, K, uv1)
+
+    def mesh_operation_closest_camera(self, mesh_id, pose) -> mesh_chart_point:
+        return self._mesh_control.mesh_operation_closest_camera(mesh_id, pose)
 
     def smpl_chart_create_frame(self, mesh_id, region) -> mesh_chart_frame:
         return self._mesh_control.smpl_chart_create_frame(mesh_id, region)
