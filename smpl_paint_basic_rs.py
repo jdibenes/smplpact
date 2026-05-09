@@ -56,7 +56,7 @@ class demo:
         cfg_lamp = smplpact.renderer_create_settings_lamp()
         cfg_smpl_model = smplpact.renderer_create_settings_smpl_model(self._smpl_uv_path, self._texture_array.shape, self._smpl_model_path, 10, self._device)
 
-        self._offscreen_renderer = smplpact.renderer_context(cfg_offscreen, cfg_scene, cfg_camera, cfg_camera_transform, cfg_lamp, cfg_smpl_model)
+        self._offscreen_renderer = smplpact.renderer_context(cfg_offscreen, cfg_scene, cfg_camera, cfg_camera_transform, cfg_lamp, cfg_smpl_model, enable_context_thread=False)
 
         # Load test pose message
         with open(self._smpl_message_path, 'rt') as json_file:
