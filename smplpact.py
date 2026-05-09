@@ -1738,10 +1738,10 @@ class renderer_scene_control:
         return wz
 
     def camera_project_points(self, points, convention=(1, -1, -1)):
-        q = math_transform_points(points, self._camera_pose, True)
-        c = np.column_stack((convention[0] * q[:, 0], convention[1] * q[:, 1], convention[2] * q[:, 2]))
-        r = (c[:, 0:2] / c[:, 2:3]) * self._kf + self._kc
-        return (r, c, q) # tuple return
+        local_pose = np.array([[convention[0],0,0,0],[0,convention[1],0,0],[0,0,convention[2],0],[0,0,0,1]], dtype=self._camera_pose.dtype) @ self._camera_pose
+        q = math_transform_points(points, local_pose, True)
+        r = (q[:, 0:2] / q[:, 2:3]) * self._kf + self._kc
+        return (r, q) # tuple return
 
     def render(self):
         color, depth = self._renderer.render(self._scene, pyrender.RenderFlags.RGBA)
@@ -1946,16 +1946,18 @@ class renderer_mesh_control:
         point, face_index, distance, = mesh_closest(mesh_a, local_origin)
         return mesh_chart_point(point, face_index, local_origin, distance, None)
     
-    def mesh_operation_raycast_camera(self, mesh_id, pose, K, uv1):
-        local_origin = np.zeros((1, 3), dtype=pose.dtype)
+    def mesh_operation_raycast_camera(self, mesh_id, pose, K, uv1, convention=(1, -1, -1)):
+        local_pose = np.array([[convention[0],0,0,0],[0,convention[1],0,0],[0,0,convention[2],0],[0,0,0,1]], dtype=pose.dtype) @ pose
+        local_origin = np.zeros((1, 3), dtype=local_pose.dtype)
         local_direction = math_normalize(math_transform_K(uv1, K, True))[0]
-        origin = math_transform_points(local_origin, pose, False)
-        direction = math_transform_bearings(local_direction, pose, False)        
+        origin = math_transform_points(local_origin, local_pose, False)
+        direction = math_transform_bearings(local_direction, local_pose, False)        
         return self.mesh_operation_raycast(mesh_id, origin, direction)
     
-    def mesh_operation_closest_camera(self, mesh_id, pose):
-        local_origin = np.zeros((1, 3), dtype=pose.dtype)
-        origin = math_transform_points(local_origin, pose, False)
+    def mesh_operation_closest_camera(self, mesh_id, pose, convention=(1, -1, -1)):
+        local_pose = np.array([[convention[0],0,0,0],[0,convention[1],0,0],[0,0,convention[2],0],[0,0,0,1]], dtype=pose.dtype) @ pose
+        local_origin = np.zeros((1, 3), dtype=local_pose.dtype)
+        origin = math_transform_points(local_origin, local_pose, False)
         return self.mesh_operation_closest(mesh_id, origin)
 
     def smpl_chart_create_frame(self, mesh_id, region):
@@ -2391,11 +2393,11 @@ class renderer:
     def mesh_operation_closest(self, mesh_id, origin) -> mesh_chart_point:
         return self._mesh_control.mesh_operation_closest(mesh_id, origin)
     
-    def mesh_operation_raycast_camera(self, mesh_id, pose, K, uv1) -> mesh_chart_point:
-        return self._mesh_control.mesh_operation_raycast_camera(mesh_id, pose, K, uv1)
+    def mesh_operation_raycast_camera(self, mesh_id, pose, K, uv1, convention=(1, -1, -1)) -> mesh_chart_point:
+        return self._mesh_control.mesh_operation_raycast_camera(mesh_id, pose, K, uv1, convention)
 
-    def mesh_operation_closest_camera(self, mesh_id, pose) -> mesh_chart_point:
-        return self._mesh_control.mesh_operation_closest_camera(mesh_id, pose)
+    def mesh_operation_closest_camera(self, mesh_id, pose, convention=(1, -1, -1)) -> mesh_chart_point:
+        return self._mesh_control.mesh_operation_closest_camera(mesh_id, pose, convention)
 
     def smpl_chart_create_frame(self, mesh_id, region) -> mesh_chart_frame:
         return self._mesh_control.smpl_chart_create_frame(mesh_id, region)
