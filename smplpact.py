@@ -1067,6 +1067,10 @@ def smpl_camera_align_dz(K_smpl, K_dst, points_world):
     return ((1 / s) * K, np.zeros((1, 3), dtype=points_world.dtype)) # tuple return
 
 
+def smpl_camera_align_I0(K_smpl, K_dst, points_world):
+    return (np.eye(3, dtype=points_world.dtype), np.zeros((1, 3), dtype=points_world.dtype)) # tuple return
+
+
 class smpl_joints:
     pelvis = 0
     left_hip = 1
