@@ -2341,19 +2341,19 @@ class renderer:
     def smpl_filter_set_linger(self, count, id='patient'):
         self._smpl_control.filter_set_linger(count, id)
 
-    def smpl_get_meshes(self, message, K_dst, index2id={ 0 : 'patient' }):
+    def smpl_get_meshes(self, message, K_dst, index2id={ 0 : 'patient' }) -> dict[str, smpl_mesh]:
         return self._smpl_control.get_meshes(message, K_dst, index2id)
     
-    def camera_get_pose(self):
+    def camera_get_pose(self) -> np.ndarray:
         return self._scene_control.camera_get_pose()
 
-    def camera_get_projection_matrix(self):
+    def camera_get_projection_matrix(self) -> np.ndarray:
         return self._scene_control.camera_get_projection_matrix()
 
-    def camera_get_transform_local(self):
+    def camera_get_transform_local(self) -> np.ndarray:
         return self._scene_control.camera_get_transform_local()
 
-    def camera_get_transform_plane(self):
+    def camera_get_transform_plane(self) -> np.ndarray:
         return self._scene_control.camera_get_transform_plane()   
     
     def camera_get_parameters(self) -> camera_transform_parameters:
@@ -2365,16 +2365,16 @@ class renderer:
     def camera_move_center(self, delta_xyz, plane=True):
         self._scene_control.camera_move_center(delta_xyz, plane)
 
-    def camera_solve_fov_z(self, center, points, plane=False):
+    def camera_solve_fov_z(self, center, points, plane=False) -> np.ndarray:
         return self._scene_control.camera_solve_fov_z(center, points, plane)
     
-    def camera_project_points(self, points, convention=(1, -1, -1)):
+    def camera_project_points(self, points, convention=(1, -1, -1)) -> tuple[np.ndarray, np.ndarray]:
         return self._scene_control.camera_project_points(points, convention)
     
-    def scene_render(self):
+    def scene_render(self) -> tuple[np.ndarray, np.ndarray]:
         return self._scene_control.render()
     
-    def scene_render_composite(self, layers):
+    def scene_render_composite(self, layers) -> tuple[np.ndarray, np.ndarray | None]:
         return self._scene_control.render_composite(layers)
     
     def mesh_add_smpl(self, group, name, smpl_data, texture, pose) -> renderer_mesh_identifier:
@@ -2387,7 +2387,7 @@ class renderer:
         mesh = (points, colors, None)
         return self._mesh_control.mesh_add_pyro(group, name, mesh, pose)
     
-    def mesh_status(self, mesh_id):
+    def mesh_status(self, mesh_id) -> dict[str, bool]:
         s = dict()
         s['registered'] = self._mesh_control.mesh_exists_item(mesh_id)
         s['presented'] = self._scene_control.group_item_exists(mesh_id)
@@ -2397,13 +2397,13 @@ class renderer:
         self._mesh_control.mesh_set_pose(mesh_id, pose)
         self._scene_control.group_item_set_pose(mesh_id, pose)
 
-    def mesh_get_pose(self, mesh_id):
+    def mesh_get_pose(self, mesh_id) -> np.ndarray:
         return self._mesh_control.mesh_get_pose(mesh_id)
     
     def mesh_set_visible(self, mesh_id, visible):
         self._scene_control.group_item_set_visible(mesh_id, visible)
 
-    def mesh_get_visible(self, mesh_id):
+    def mesh_get_visible(self, mesh_id) -> bool | None:
         return self._scene_control.group_item_get_visible(mesh_id)
 
     def mesh_present(self, mesh_id):
@@ -2451,7 +2451,7 @@ class renderer:
     def smpl_chart_to_spherical(self, mesh_id, frame, point) -> mesh_chart_local:
         return self._mesh_control.smpl_chart_to_spherical(mesh_id, frame, point)
 
-    def smpl_chart_to_pose(self, mesh_id, frame):
+    def smpl_chart_to_pose(self, mesh_id, frame) -> np.ndarray:
         return self._mesh_control.smpl_chart_to_pose(mesh_id, frame)
 
     def smpl_paint_set_background(self, mesh_id, background):
@@ -2585,9 +2585,9 @@ class renderer_context(renderer):
     def __exit__(self, exc_type, exc_val, exc_tb):
         pass
 
-    def scene_render(self):
+    def scene_render(self) -> tuple[np.ndarray, np.ndarray]:
         return self.__context_thread.call(super().scene_render)
     
-    def scene_render_composite(self, layers):
+    def scene_render_composite(self, layers) -> tuple[np.ndarray, np.ndarray | None]:
         return self.__context_thread.call(super().scene_render_composite, layers)
 
