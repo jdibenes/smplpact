@@ -40,10 +40,23 @@ def scan_path(base_path, files_sort=False, files_key=None, files_reverse=False, 
 # Math
 #------------------------------------------------------------------------------
 
+def math_norm(a):
+    return np.linalg.norm(a)
+
+
 # TODO: handle m == 0
 def math_normalize(a):
-    m = np.linalg.norm(a)
+    m = math_norm(a)
     return (a / m, m) # tuple return
+
+
+def math_vector_norm(array):
+    return np.linalg.norm(array, axis=-1)
+
+
+def math_vector_normalize(array):
+    m = math_vector_norm(array)[..., np.newaxis]
+    return (array / m, m) # tuple return
 
 
 def math_transform_points(points, pose, inverse):
@@ -65,9 +78,33 @@ def math_transform_K(xy1, K, inverse):
     return (xy1 @ K) if (not inverse) else (xy1 @ np.linalg.inv(K))
 
 
+def math_homogeneous_component(array):
+    return array[..., -1, np.newaxis]
+
+
+def math_inhomogeneous_component(array):
+    return array[..., 0:-1]
+
+
+def math_to_homogeneous(array):
+    return np.concatenate((array, np.ones(array.shape[0:-1] + (1,), dtype=array.dtype)), axis=-1)
+
+
+def math_to_inhomogeneous(array):
+    return math_inhomogeneous_component(array) / math_homogeneous_component(array)
+
+
 #------------------------------------------------------------------------------
 # Geometry Solvers
 #------------------------------------------------------------------------------
+
+def geometry_local_to_world(pose):
+    return pose
+
+
+def geometry_world_to_local(pose):
+    return math_invert_pose(pose)
+
 
 # TODO: handle error for singular matrix
 def geometry_solve_basis(vas, vbs, vad, vbd):
@@ -103,7 +140,7 @@ def geometry_distance_point_line(line_point, line_direction, point):
     offset = point - line_point
     ny = offset @ line_direction.T
     xz = offset - ny * line_direction
-    return np.linalg.norm(xz)
+    return math_norm(xz)
 
 
 def geometry_distance_point_segment(line_start, line_end, point):
@@ -111,13 +148,13 @@ def geometry_distance_point_segment(line_start, line_end, point):
     offset = point - line_start
     ny = offset @ line_direction.T
     if (ny <= 0):
-        return np.linalg.norm(offset)
+        return math_norm(offset)
     offset = point - line_end
     ny = offset @ line_direction.T
     if (ny >= 0):
-        return np.linalg.norm(offset)
+        return math_norm(offset)
     xz = offset - ny * line_direction
-    return np.linalg.norm(xz)
+    return math_norm(xz)
 
 
 #------------------------------------------------------------------------------
@@ -331,7 +368,7 @@ def mesh_align_prior(face_normals, face_index, align_axis, align_axis_fallback, 
 def mesh_snap_to_vertex(vertices, faces, point, face_index):
     vertex_indices = faces[face_index]
     vertices = vertices[vertex_indices, :]
-    distances = np.linalg.norm(point - vertices, axis=1)
+    distances = math_vector_norm(point - vertices)
     return np.argmin(distances)
 
 
@@ -346,7 +383,7 @@ def mesh_select_vertices(vertices, neighbors, origin_vertex_index, radius, level
         vertex_xyz = vertices[vertex_index, :]
         for neighbor_index in neighbors[vertex_index]:
             neighbor_xyz = vertices[neighbor_index, :]
-            neighbor_distance = vertex_distance + np.linalg.norm(neighbor_xyz - vertex_xyz)
+            neighbor_distance = vertex_distance + math_norm(neighbor_xyz - vertex_xyz)
             neighbor_level = vertex_level + 1
             if ((neighbor_distance <= radius) and (neighbor_level <= level) and (neighbor_distance < distances.get(neighbor_index, np.Inf))):          
                 buffer.append((neighbor_index, neighbor_distance, neighbor_level))
@@ -534,7 +571,7 @@ class mesh_neighborhood_operation_brush:
         return self._result
     
     def _paint_uv(self, pixels, weights):
-        distances = np.linalg.norm((weights @ self._simplex_3d) - self._origin, axis=1)
+        distances = math_vector_norm((weights @ self._simplex_3d) - self._origin)
         self._result = self._target(pixels, distances, self._level)
 
 
@@ -974,7 +1011,7 @@ class mesh_chart_frame:
         offset = point - self.center
         ny = offset @ self.up.T
         xz = offset - ny * self.up
-        nxz = np.linalg.norm(xz)
+        nxz = math_norm(xz)
         nx = self.left @ xz.T
         nz = self.front @ xz.T
         return (offset, nx, ny, nz, xz, nxz) # tuple return
@@ -1181,7 +1218,7 @@ class smpl_mesh_chart_openpose(mesh_chart):
         up    = math_normalize(up)[0]
 
         center = (ankle + smalltoe) * 0.5
-        length = np.linalg.norm(ankle - smalltoe)
+        length = math_norm(ankle - smalltoe)
         points = np.vstack((bigtoe, smalltoe, ankle, heel))
 
         return mesh_chart_frame(left, up, front, center, length, points)
@@ -1212,7 +1249,7 @@ class smpl_mesh_chart_openpose(mesh_chart):
         front = math_normalize(front)[0]
 
         center = (ankle + knee) * 0.5
-        length = np.linalg.norm(ankle - knee)
+        length = math_norm(ankle - knee)
         points = np.vstack((bigtoe, ankle, knee))
 
         return mesh_chart_frame(left, up, front, center, length, points)
@@ -1241,7 +1278,7 @@ class smpl_mesh_chart_openpose(mesh_chart):
         front = math_normalize(front)[0]
 
         center = (hip + knee) * 0.5
-        length = np.linalg.norm(hip - knee)
+        length = math_norm(hip - knee)
         points = np.vstack((knee, hip))
 
         return mesh_chart_frame(left, up, front, center, length, points)
@@ -1270,7 +1307,7 @@ class smpl_mesh_chart_openpose(mesh_chart):
         front = math_normalize(front)[0]
 
         center = (mhip + neck) * 0.5
-        length = np.linalg.norm(mhip - neck)
+        length = math_norm(mhip - neck)
         points = np.vstack((lhip, mhip, rhip, neck))
         
         return mesh_chart_frame(left, up, front, center, length, points)
@@ -1294,7 +1331,7 @@ class smpl_mesh_chart_openpose(mesh_chart):
         front = math_normalize(front)[0]
 
         center = (nose + lear + rear) / 3
-        length = np.linalg.norm(neck - nose)
+        length = math_norm(neck - nose)
         points = np.vstack((lear, rear, neck, nose))
 
         return mesh_chart_frame(left, up, front, center, length, points)
@@ -1317,7 +1354,7 @@ class smpl_mesh_chart_openpose(mesh_chart):
         front = math_normalize(front)[0]
 
         center = (elbow + shoulder) * 0.5
-        length = np.linalg.norm(elbow - shoulder)
+        length = math_norm(elbow - shoulder)
         points = np.vstack((shoulder, elbow))
 
         return mesh_chart_frame(left, up, front, center, length, points)
@@ -1346,7 +1383,7 @@ class smpl_mesh_chart_openpose(mesh_chart):
         front = math_normalize(front)[0]
 
         center = (elbow + wrist) * 0.5
-        length = np.linalg.norm(elbow - wrist)
+        length = math_norm(elbow - wrist)
         points = np.vstack((wrist, elbow))
 
         return mesh_chart_frame(left, up, front, center, length, points)
