@@ -61,6 +61,10 @@ def math_invert_pose(pose):
     return T
 
 
+def math_transform_K(xy1, K, inverse):
+    return (xy1 @ K) if (not inverse) else (xy1 @ np.linalg.inv(K))
+
+
 #------------------------------------------------------------------------------
 # Geometry Solvers
 #------------------------------------------------------------------------------
@@ -1453,9 +1457,9 @@ class camera_transform:
         self._tz = np.eye(4, dtype=center.dtype)
         self._tc = np.eye(4, dtype=center.dtype)
         self._global_pose = np.eye(4, dtype=center.dtype)
-        self._global_x = self._global_pose[:3, 0]
-        self._global_y = self._global_pose[:3, 1]
-        self._global_z = self._global_pose[:3, 2]
+        self._global_x = self._global_pose[0, :3]
+        self._global_y = self._global_pose[1, :3]
+        self._global_z = self._global_pose[2, :3]
 
         self.set_center(center)
         self.set_yaw(yaw)
@@ -1467,7 +1471,7 @@ class camera_transform:
 
     def set_yaw(self, value):
         self._yaw = value
-        self._ry = trimesh.transformations.rotation_matrix(np.radians(self._yaw), self._global_y)
+        self._ry = trimesh.transformations.rotation_matrix(np.radians(self._yaw), self._global_y).T
         self._dirty = True
 
     def update_yaw(self, delta):
@@ -1478,7 +1482,7 @@ class camera_transform:
 
     def set_pitch(self, value):
         self._pitch = np.clip(value, self._min_pitch, self._max_pitch)
-        self._rx = trimesh.transformations.rotation_matrix(np.radians(self._pitch), self._global_x)
+        self._rx = trimesh.transformations.rotation_matrix(np.radians(self._pitch), self._global_x).T
         self._dirty = True
 
     def update_pitch(self, delta):
@@ -1489,7 +1493,7 @@ class camera_transform:
 
     def set_distance(self, value):
         self._distance = np.clip(value, self._znear, self._zfar)
-        self._tz[2, 3] = self._distance
+        self._tz[3, 2] = self._distance
         self._dirty = True
 
     def update_distance(self, delta):
@@ -1500,7 +1504,7 @@ class camera_transform:
     
     def set_center(self, value):
         self._center = value
-        self._tc[:3, 3] = self._center
+        self._tc[3, :3] = self._center
         self._dirty = True
 
     def update_center(self, delta):
@@ -1543,12 +1547,12 @@ class camera_transform:
 
     def _update(self):
         if (self._dirty):
-            self._local_pose = self._tc @ self._ry @ self._rx @ self._tz
-            self._local_x = self._local_pose[:3, 0]
-            self._local_y = self._local_pose[:3, 1]
-            self._local_z = self._local_pose[:3, 2]
+            self._local_pose = self._tz @ self._rx @ self._ry @ self._tc
+            self._local_x = self._local_pose[0, :3]
+            self._local_y = self._local_pose[1, :3]
+            self._local_z = self._local_pose[2, :3]
             self._plane_z = np.cross(self._local_x, self._global_y)
-            self._plane_pose = np.column_stack((self._local_x, self._global_y, self._plane_z))
+            self._plane_pose = np.row_stack((self._local_x, self._global_y, self._plane_z))
             self._dirty = False
 
     def get_transform_local(self):
@@ -1562,7 +1566,7 @@ class camera_transform:
     def move_center(self, delta_xyz, plane=True):
         self._update()
         pose = self._local_pose if (not plane) else self._plane_pose
-        center = delta_xyz[0] * pose[:3, 0] + delta_xyz[1] * pose[:3, 1] + delta_xyz[2] * pose[:3, 2]
+        center = delta_xyz[0] * pose[0, :3] + delta_xyz[1] * pose[1, :3] + delta_xyz[2] * pose[2, :3]
         self.update_center(center)
 
 
@@ -1686,8 +1690,8 @@ class renderer_scene_control:
         self._groups = dict()
         self._camera_pose = self._camera_transform.get_transform_local()
 
-        self._node_camera = self._scene.add(self._camera, 'internal@main@camera', self._camera_pose)
-        self._node_light = self._scene.add(self._light, 'internal@main@lamp', self._camera_pose)
+        self._node_camera = self._scene.add(self._camera, 'internal@main@camera', self._camera_pose.T)
+        self._node_light = self._scene.add(self._light, 'internal@main@lamp', self._camera_pose.T)
 
         self._kf = np.array([[self._camera.fx, self._camera.fy]], self._camera_pose.dtype)
         self._kc = np.array([[self._camera.cx, self._camera.cy]], self._camera_pose.dtype)
@@ -1695,8 +1699,8 @@ class renderer_scene_control:
     def _camera_set_pose(self, camera_pose):
         self._camera_pose = camera_pose
 
-        self._scene.set_pose(self._node_camera, self._camera_pose)
-        self._scene.set_pose(self._node_light, self._camera_pose)
+        self._scene.set_pose(self._node_camera, self._camera_pose.T)
+        self._scene.set_pose(self._node_light, self._camera_pose.T)
 
     def _camera_update_pose(self):
         pose = self._camera_transform.get_transform_local()
@@ -1706,7 +1710,7 @@ class renderer_scene_control:
         return self._camera_pose
 
     def camera_get_projection_matrix(self):
-        return self._camera.get_projection_matrix(self._renderer.viewport_width, self._renderer.viewport_height)
+        return self._camera.get_projection_matrix(self._renderer.viewport_width, self._renderer.viewport_height).T
     
     def camera_get_transform_plane(self):
         return self._camera_transform.get_transform_plane()
@@ -1727,14 +1731,14 @@ class renderer_scene_control:
 
     def camera_solve_fov_z(self, center, points, plane=False):
         pose = self._camera_transform.get_transform_local() if (not plane) else self._camera_transform.get_transform_plane()
-        x = pose[:3, 0:1].T
-        y = pose[:3, 1:2].T
-        z = pose[:3, 2:3].T
+        x = pose[0:1, :3]
+        y = pose[1:2, :3]
+        z = pose[2:3, :3]
         wz = geometry_solve_fov_z(self._renderer.viewport_width, self._renderer.viewport_height, self._camera.fx, self._camera.fy, self._camera.cx, self._camera.cy, x, y, z, center, points)
         return wz
 
     def camera_project_points(self, points, convention=(1, -1, -1)):
-        q = math_transform_points(points, self._camera_pose.T, True)
+        q = math_transform_points(points, self._camera_pose, True)
         c = np.column_stack((convention[0] * q[:, 0], convention[1] * q[:, 1], convention[2] * q[:, 2]))
         r = (c[:, 0:2] / c[:, 2:3]) * self._kf + self._kc
         return (r, c, q) # tuple return
@@ -1778,7 +1782,7 @@ class renderer_scene_control:
         previous = nodes.get(name, None)
         if (previous is not None):
             self._scene.remove_node(previous)
-        nodes[name] = self._scene.add(item, 'external@' + group + '@' + name, pose)
+        nodes[name] = self._scene.add(item, 'external@' + group + '@' + name, pose if (pose is None) else pose.T)
         return renderer_mesh_identifier(group, name, 'external', None)
 
     def group_item_exists(self, item_id):
@@ -1803,14 +1807,14 @@ class renderer_scene_control:
         if (nodes is not None):
             item = nodes.get(item_id.name, None)
             if (item is not None):
-                self._scene.set_pose(item, pose)
+                self._scene.set_pose(item, pose.T)
 
     def group_item_get_pose(self, item_id):
         nodes = self._groups.get(item_id.group, None)
         if (nodes is not None):
             item = nodes.get(item_id.name, None)
             if (item is not None):
-                return self._scene.get_pose(item)
+                return self._scene.get_pose(item).T
         return None
 
     def group_item_set_visible(self, item_id, visible):
@@ -1931,14 +1935,14 @@ class renderer_mesh_control:
     
     def mesh_operation_raycast(self, mesh_id, origin, direction):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
-        local_origin = math_transform_points(origin, pose.T, True)
-        local_direction = math_transform_bearings(direction, pose.T, True)
+        local_origin = math_transform_points(origin, pose, True)
+        local_direction = math_transform_bearings(direction, pose, True)
         point, face_index = mesh_raycast(mesh_a, local_origin, local_direction)
         return mesh_chart_point(point, face_index, local_origin, local_direction, None)
 
     def mesh_operation_closest(self, mesh_id, origin):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
-        local_origin = math_transform_points(origin, pose.T, True)
+        local_origin = math_transform_points(origin, pose, True)
         point, face_index, distance, = mesh_closest(mesh_a, local_origin)
         return mesh_chart_point(point, face_index, local_origin, distance, None)
 
@@ -1956,12 +1960,12 @@ class renderer_mesh_control:
     
     def smpl_chart_to_cylindrical(self, mesh_id, frame, point):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
-        local_point = math_transform_points(point, pose.T, True)
+        local_point = math_transform_points(point, pose, True)
         return chart.to_cylindrical(frame, local_point)
     
     def smpl_chart_to_spherical(self, mesh_id, frame, point):
         mesh_a, mesh_b, chart, pose = self._meshes[mesh_id.group][mesh_id.name]
-        local_point = math_transform_points(point, pose.T, True)
+        local_point = math_transform_points(point, pose, True)
         return chart.to_spherical(frame, local_point)
     
     def smpl_chart_to_pose(self, mesh_id, frame):
@@ -2105,6 +2109,8 @@ class renderer_smpl_filter:
                 global_orient[joint, :, :] = orientation
 
     def _align(self, K_smpl, K_dst, mesh):
+        if (K_dst is None):
+            return
         Rt = np.vstack(self._align_mode(K_smpl, K_dst, mesh.joints))
 
         mesh.vertices[...]          = math_transform_points(  mesh.vertices,          Rt, False)
