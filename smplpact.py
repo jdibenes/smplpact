@@ -2368,8 +2368,22 @@ class context_thread:
         self._thread.join()
 
 
+class context_local:
+    def __init__(self, daemon=False):
+        pass
+
+    def start(self):
+        pass
+
+    def call(self, task, /, *args, **keywords):
+        return task(*args, **keywords) if (task is not None) else None
+    
+    def stop(self):
+        pass
+
+
 class renderer_context(renderer):
-    def __init__(self, settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp, settings_smpl_model, settings_smpl_filter_bounding_box=None, settings_smpl_filter_forward_face=None, settings_smpl_filter_exponential_single=None, settings_smpl_filter_fixed_joints=None):
+    def __init__(self, settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp, settings_smpl_model, settings_smpl_filter_bounding_box=None, settings_smpl_filter_forward_face=None, settings_smpl_filter_exponential_single=None, settings_smpl_filter_fixed_joints=None, enable_context_thread=False):
         self.__ready = False
         self.__settings_renderer = {'settings_offscreen' : settings_offscreen, 'settings_scene' : settings_scene, 'settings_camera' : settings_camera, 'settings_camera_transform' : settings_camera_transform, 'settings_lamp' : settings_lamp}
         self.__settings_smpl_model = settings_smpl_model
@@ -2377,7 +2391,7 @@ class renderer_context(renderer):
         self.__settings_smpl_filter_forward_face = settings_smpl_filter_forward_face if (settings_smpl_filter_forward_face is not None) else renderer_create_settings_smpl_filter_forward_face()
         self.__settings_smpl_filter_exponential_single = settings_smpl_filter_exponential_single if (settings_smpl_filter_exponential_single is not None) else renderer_create_settings_smpl_filter_exponential_single()
         self.__settings_smpl_filter_fixed_joints = settings_smpl_filter_fixed_joints if (settings_smpl_filter_fixed_joints is not None) else renderer_create_settings_smpl_filter_fixed_joints()
-        self.__context_thread = context_thread(True)
+        self.__context_thread = context_thread(True) if (enable_context_thread) else context_local(True)
 
     def __build(self):
         super().__init__(**self.__settings_renderer)
