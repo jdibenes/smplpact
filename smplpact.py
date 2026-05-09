@@ -2188,12 +2188,14 @@ class renderer_smpl_control:
                 valid[index] = True
             if (valid[index]):
                 self._filters[id].apply(smpl_params['global_orient'][index], smpl_params['body_pose'][index], smpl_params['betas'][index], smpl_params['transl'][index])
-        result = self._smpl_model.to_mesh(smpl_params)
+        result = None
         for index in range(0, batches):
             id = index2id.get(index, None)
             if (id is None):
                 continue
             if (valid[index]):
+                if (result is None):
+                    result = self._smpl_model.to_mesh(smpl_params)
                 self._filters[id].check(K_smpl, K_dst, result.at(index))
     
     def _claim_all(self):
