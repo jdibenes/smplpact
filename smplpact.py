@@ -1650,7 +1650,7 @@ def renderer_create_settings_lamp(color=(1.0, 1.0, 1.0), intensity=3.0, name='la
 
 def renderer_create_settings_camera_transform(center=(0, 0, 0), yaw=0, pitch=0, distance=1, min_pitch=-75, max_pitch=75, znear=0.05, zfar=100):
     s = dict()
-    s['center'] = np.array([center], np.float32)
+    s['center'] = np.array(center, dtype=np.float32).reshape((1, 3))
     s['yaw'] = yaw
     s['pitch'] = pitch
     s['distance'] = distance
@@ -1760,6 +1760,8 @@ class renderer_scene_control:
         return self._camera_transform.get_parameters()
     
     def camera_adjust_parameters(self, yaw=None, pitch=None, distance=None, center=None, relative=True):
+        if (center is not None):
+            center = np.array(center, dtype=np.float32).reshape((1, 3))
         self._camera_transform.adjust_parameters(yaw, pitch, distance, center, relative)
         self._camera_update_pose()
 
@@ -1774,6 +1776,15 @@ class renderer_scene_control:
         z = pose[2:3, :3]
         wz = geometry_solve_fov_z(self._renderer.viewport_width, self._renderer.viewport_height, self._camera.fx, self._camera.fy, self._camera.cx, self._camera.cy, x, y, z, center, points)
         return wz
+
+    def camera_match_opencv(self):
+        self.camera_adjust_parameters(0, 180, 0, (0, 0, 0), False)
+
+    def camera_focus_points(self, center, points, pose, focus_factor=1.0):
+        focus_center = math_transform_points(center, pose, False)
+        focus_points = math_transform_points(points, pose, False)
+        focus_distance = self.camera_solve_fov_z(focus_center, focus_points)
+        self.camera_adjust_parameters(center=focus_center, distance=focus_factor * focus_distance, relative=False)
 
     def camera_project_points(self, points, convention=(1, -1, -1)):
         local_pose = np.array([[convention[0],0,0,0],[0,convention[1],0,0],[0,0,convention[2],0],[0,0,0,1]], dtype=self._camera_pose.dtype) @ self._camera_pose
@@ -2369,6 +2380,17 @@ class renderer:
     def camera_solve_fov_z(self, center, points, plane=False) -> np.ndarray:
         return self._scene_control.camera_solve_fov_z(center, points, plane)
     
+    def camera_match_opencv(self):
+        self._scene_control.camera_match_opencv()
+
+    def camera_focus_points(self, center, points, pose, focus_factor=1.0):
+        self._scene_control.camera_focus_points(center, points, pose, focus_factor)
+
+    def camera_focus_smpl_region(self, mesh_id, region, focus_factor=1.0):
+        smpl_frame = self._mesh_control.smpl_chart_create_frame(mesh_id, region)
+        pose = self._mesh_control.mesh_get_pose(mesh_id)
+        self._scene_control.camera_focus_points(smpl_frame.center, smpl_frame.points, pose, focus_factor)
+
     def camera_project_points(self, points, convention=(1, -1, -1)) -> tuple[np.ndarray, np.ndarray]:
         return self._scene_control.camera_project_points(points, convention)
     
@@ -2620,7 +2642,7 @@ class renderer_camera_controller:
         for f, name, p, n, step in self._actions:
             value = (int(key in p) - int(key in n)) * step * multiplier
             if (value != 0):
-                f(**{ name : value})
+                f(**{ name : value })
 
 
 class fps_counter:
