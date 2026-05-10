@@ -2601,6 +2601,10 @@ def ord_alpha(s:str):
     return [ord(s.upper()), ord(s.lower())]
 
 
+def renderer_create_settings_camera_transform_opencv(zfar=100):
+    return renderer_create_settings_camera_transform((0, 0, 0), 0, 180, 0, -180, 180, 0, zfar)
+
+
 class renderer_camera_controller:
     def __init__(self, renderer : renderer, kb_p_yaw, kb_n_yaw, kb_p_pitch, kb_n_pitch, kb_p_distance, kb_n_distance, kb_p_center_x, kb_n_center_x, kb_p_center_y, kb_n_center_y, kb_p_center_z, kb_n_center_z, step_yaw, step_pitch, step_distance, step_center_x, step_center_y, step_center_z, plane=True):
         self._actions = [
