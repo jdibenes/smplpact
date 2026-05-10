@@ -17,6 +17,7 @@ import trimesh.exchange.obj
 import smplx
 import roma
 
+from functools import partial
 from PIL import Image, ImageFont, ImageDraw
 
 
@@ -1600,10 +1601,10 @@ class camera_transform:
         self._update()
         return self._plane_pose
     
-    def move_center(self, delta_xyz, plane=True):
+    def move_center(self, delta_x=0, delta_y=0, delta_z=0, plane=True):
         self._update()
         pose = self._local_pose if (not plane) else self._plane_pose
-        center = delta_xyz[0] * pose[0, :3] + delta_xyz[1] * pose[1, :3] + delta_xyz[2] * pose[2, :3]
+        center = delta_x * pose[0, :3] + delta_y * pose[1, :3] + delta_z * pose[2, :3]
         self.update_center(center)
 
 
@@ -1762,8 +1763,8 @@ class renderer_scene_control:
         self._camera_transform.adjust_parameters(yaw, pitch, distance, center, relative)
         self._camera_update_pose()
 
-    def camera_move_center(self, delta_xyz, plane=True):
-        self._camera_transform.move_center(delta_xyz, plane)
+    def camera_move_center(self, delta_x=0, delta_y=0, delta_z=0, plane=True):
+        self._camera_transform.move_center(delta_x, delta_y, delta_z, plane)
         self._camera_update_pose()
 
     def camera_solve_fov_z(self, center, points, plane=False):
@@ -2362,8 +2363,8 @@ class renderer:
     def camera_adjust_parameters(self, yaw=None, pitch=None, distance=None, center=None, relative=True):
         self._scene_control.camera_adjust_parameters(yaw, pitch, distance, center, relative)
 
-    def camera_move_center(self, delta_xyz, plane=True):
-        self._scene_control.camera_move_center(delta_xyz, plane)
+    def camera_move_center(self, delta_x=0, delta_y=0, delta_z=0, plane=True):
+        self._scene_control.camera_move_center(delta_x, delta_y, delta_z, plane)
 
     def camera_solve_fov_z(self, center, points, plane=False) -> np.ndarray:
         return self._scene_control.camera_solve_fov_z(center, points, plane)
@@ -2590,4 +2591,26 @@ class renderer_context(renderer):
     
     def scene_render_composite(self, layers) -> tuple[np.ndarray, np.ndarray | None]:
         return self.__context_thread.call(super().scene_render_composite, layers)
+
+
+#------------------------------------------------------------------------------
+# Extensions
+#------------------------------------------------------------------------------
+
+class renderer_camera_controller:
+    def __init__(self, renderer : renderer, kb_p_yaw, kb_n_yaw, kb_p_pitch, kb_n_pitch, kb_p_distance, kb_n_distance, kb_p_center_x, kb_n_center_x, kb_p_center_y, kb_n_center_y, kb_p_center_z, kb_n_center_z, step_yaw, step_pitch, step_distance, step_center_x, step_center_y, step_center_z, plane=True):
+        self._actions = [
+            (partial(renderer.camera_adjust_parameters, relative=True), "yaw",      set(kb_p_yaw),      set(kb_n_yaw),      step_yaw,),
+            (partial(renderer.camera_adjust_parameters, relative=True), "pitch",    set(kb_p_pitch),    set(kb_n_pitch),    step_pitch,),
+            (partial(renderer.camera_adjust_parameters, relative=True), "distance", set(kb_p_distance), set(kb_n_distance), step_distance,),
+            (partial(renderer.camera_move_center, plane=plane),         "delta_x",  set(kb_p_center_x), set(kb_n_center_x), step_center_x,),
+            (partial(renderer.camera_move_center, plane=plane),         "delta_y",  set(kb_p_center_y), set(kb_n_center_y), step_center_y,),
+            (partial(renderer.camera_move_center, plane=plane),         "delta_z",  set(kb_p_center_z), set(kb_n_center_z), step_center_z,),
+        ]
+
+    def update(self, key, multiplier=1.0):
+        for f, name, p, n, step in self._actions:
+            value = (int(key in p) - int(key in n)) * step * multiplier
+            if (value != 0):
+                f(**{ name : value})
 
