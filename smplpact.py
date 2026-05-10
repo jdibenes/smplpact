@@ -2597,6 +2597,10 @@ class renderer_context(renderer):
 # Extensions
 #------------------------------------------------------------------------------
 
+def ord_alpha(s:str):
+    return [ord(s.upper()), ord(s.lower())]
+
+
 class renderer_camera_controller:
     def __init__(self, renderer : renderer, kb_p_yaw, kb_n_yaw, kb_p_pitch, kb_n_pitch, kb_p_distance, kb_n_distance, kb_p_center_x, kb_n_center_x, kb_p_center_y, kb_n_center_y, kb_p_center_z, kb_n_center_z, step_yaw, step_pitch, step_distance, step_center_x, step_center_y, step_center_z, plane=True):
         self._actions = [
@@ -2613,4 +2617,28 @@ class renderer_camera_controller:
             value = (int(key in p) - int(key in n)) * step * multiplier
             if (value != 0):
                 f(**{ name : value})
+
+
+class fps_counter:
+    def __init__(self, manual_reset=False):
+        self._manual_reset = manual_reset
+
+    def reset(self):
+        self._start = time.perf_counter()
+        self._count = 0
+
+    def increment(self):
+        self._count += 1
+
+    def count(self):
+        return self._count
+
+    def elapsed(self):
+        return time.perf_counter() - self._start
+    
+    def sample(self):
+        fps = self.count() / self.elapsed()
+        if (not self._manual_reset):
+            self.reset()
+        return fps
 
