@@ -323,6 +323,10 @@ def texture_processor(simplex_uvx, callback, tolerance=0):
             callback(box[mask, :], abc[mask, :])
 
 
+def texture_rotate_times_90(color, code):
+    return cv2.rotate(color, cv2.ROTATE_90_COUNTERCLOCKWISE) if (code == 1) else cv2.rotate(color, cv2.ROTATE_180) if (code == 2) else cv2.rotate(color, cv2.ROTATE_90_CLOCKWISE) if (code == 3) else color
+
+
 #------------------------------------------------------------------------------
 # Mesh Processing
 #------------------------------------------------------------------------------
@@ -1468,6 +1472,10 @@ class smpl_model:
         vertex_normals_uv = torch.index_select(vertex_normals, 1, self._smpl_uv_transform)
  
         return smpl_model_result(vertices.cpu().numpy(), vertex_normals.cpu().numpy(), vertices_uv.cpu().numpy(), vertex_normals_uv.cpu().numpy(), faces, face_normals.cpu().numpy(), joints.cpu().numpy())
+
+
+def smpl_region_align(smpl_data, region):
+    return math_invert_pose(smpl_mesh_chart_openpose(mesh_create(smpl_data.vertices, smpl_data.faces), smpl_data.joints).create_frame(region).to_pose())
 
 
 #------------------------------------------------------------------------------
@@ -2618,10 +2626,6 @@ class renderer_context(renderer):
 #------------------------------------------------------------------------------
 # Extensions
 #------------------------------------------------------------------------------
-
-def smpl_region_pose(smpl_data, region):
-    return math_invert_pose(smpl_mesh_chart_openpose(mesh_create(smpl_data.vertices, smpl_data.faces), smpl_data.joints).create_frame(region).to_pose())
-
 
 def ord_alpha(s):
     return [ord(s.upper()), ord(s.lower())]
