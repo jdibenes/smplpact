@@ -2619,7 +2619,11 @@ class renderer_context(renderer):
 # Extensions
 #------------------------------------------------------------------------------
 
-def ord_alpha(s:str):
+def smpl_region_pose(smpl_data, region):
+    return math_invert_pose(smpl_mesh_chart_openpose(mesh_create(smpl_data.vertices, smpl_data.faces), smpl_data.joints).create_frame(region).to_pose())
+
+
+def ord_alpha(s):
     return [ord(s.upper()), ord(s.lower())]
 
 
@@ -2628,7 +2632,7 @@ def renderer_create_settings_camera_transform_opencv(zfar=100):
 
 
 class renderer_camera_controller:
-    def __init__(self, renderer : renderer, kb_p_yaw, kb_n_yaw, kb_p_pitch, kb_n_pitch, kb_p_distance, kb_n_distance, kb_p_center_x, kb_n_center_x, kb_p_center_y, kb_n_center_y, kb_p_center_z, kb_n_center_z, step_yaw, step_pitch, step_distance, step_center_x, step_center_y, step_center_z, plane=True):
+    def __init__(self, renderer, kb_p_yaw, kb_n_yaw, kb_p_pitch, kb_n_pitch, kb_p_distance, kb_n_distance, kb_p_center_x, kb_n_center_x, kb_p_center_y, kb_n_center_y, kb_p_center_z, kb_n_center_z, step_yaw, step_pitch, step_distance, step_center_x, step_center_y, step_center_z, plane=True):
         self._actions = [
             (partial(renderer.camera_adjust_parameters, relative=True), "yaw",      set(kb_p_yaw),      set(kb_n_yaw),      step_yaw,),
             (partial(renderer.camera_adjust_parameters, relative=True), "pitch",    set(kb_p_pitch),    set(kb_n_pitch),    step_pitch,),
