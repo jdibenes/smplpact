@@ -327,6 +327,10 @@ def texture_rotate_times_90(color, code):
     return cv2.rotate(color, cv2.ROTATE_90_COUNTERCLOCKWISE) if (code == 1) else cv2.rotate(color, cv2.ROTATE_180) if (code == 2) else cv2.rotate(color, cv2.ROTATE_90_CLOCKWISE) if (code == 3) else color
 
 
+def texture_rgb_to_bgr(color):
+    return cv2.cvtColor(color, cv2.COLOR_RGB2BGR)
+
+
 #------------------------------------------------------------------------------
 # Mesh Processing
 #------------------------------------------------------------------------------
