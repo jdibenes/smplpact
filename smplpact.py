@@ -1650,7 +1650,7 @@ def renderer_create_settings_lamp(color=(1.0, 1.0, 1.0), intensity=3.0, name='la
 
 def renderer_create_settings_camera_transform(center=(0, 0, 0), yaw=0, pitch=0, distance=1, min_pitch=-75, max_pitch=75, znear=0.05, zfar=100):
     s = dict()
-    s['center'] = np.array(center, np.float32)
+    s['center'] = np.array([center], np.float32)
     s['yaw'] = yaw
     s['pitch'] = pitch
     s['distance'] = distance
