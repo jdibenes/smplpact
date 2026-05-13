@@ -1717,6 +1717,14 @@ def renderer_create_settings_smpl_filter_exponential_brownd(weights=None, m=None
     return s
 
 
+def renderer_create_settings_smpl_filter_exponential_double(weighta=None, weightb=None, m=None):
+    s = dict()
+    s['weighta'] = weighta
+    s['weightb'] = weightb
+    s['m'] = m
+    return s
+
+
 def renderer_create_settings_smpl_filter_fixed_joints(joint_orientation_map=None):
     s = dict()
     s['joint_orientation_map'] = joint_orientation_map
@@ -2138,7 +2146,7 @@ def filter_exponential_brownd_step_r(s1_tm1, x_t, alpha, s2_tm1, m):
     ms2_t = roma.rotmat_inverse(s2_t)
     a_t = roma.rotmat_composition((ms2_t, s1_t, s1_t))
     b_t = roma.rotvec_to_rotmat(((m * alpha) / (1 - alpha)) * roma.rotmat_to_rotvec(roma.rotmat_composition((ms2_t, s1_t))))
-    f = roma.rotmat_composition((b_t, a_t))
+    f = roma.rotmat_composition((a_t, b_t))
     return (s1_t, s2_t, f) # tuple return
 
 
@@ -2153,6 +2161,20 @@ def filter_exponential_brownd_step_l(s1_tm1, x_t, alpha, s2_tm1, m):
     b_t = ((m * alpha) / (1 - alpha)) * (s1_t - s2_t)
     f = a_t + b_t
     return (s1_t, s2_t, f) # tuple return
+
+
+def filter_exponential_double_step_r(s_tm1, x_t, alpha, b_tm1, beta, m):
+    s_t = roma.rotmat_slerp(roma.rotmat_composition((s_tm1, b_tm1)), x_t, alpha)
+    b_t = roma.rotvec_to_rotmat(m * roma.rotmat_to_rotvec(roma.rotmat_slerp(b_tm1, roma.rotmat_composition((roma.rotmat_inverse(s_tm1), s_t)), beta)))
+    f = roma.rotmat_composition((s_t, b_t))
+    return (s_t, b_t, f) # tuple return
+
+
+def filter_exponential_double_step_l(s_tm1, x_t, alpha, b_tm1, beta, m):
+    s_t = alpha * x_t + (1 - alpha) * (s_tm1 + b_tm1)
+    b_t = (beta * (s_t - s_tm1) + (1 - beta) * b_tm1) * m
+    f = s_t + b_t
+    return (s_t, b_t, f) # tuple return
 
 
 class renderer_smpl_filter:
@@ -2180,6 +2202,11 @@ class renderer_smpl_filter:
     def filter_set_exponential_brownd(self, weights, m):
         self._eb_weight = torch.tensor(weights, dtype=torch.float32, device=self._device) if (weights is not None) else None
         self._eb_m      = torch.tensor(m,       dtype=torch.float32, device=self._device) if (m       is not None) else None
+
+    def filter_set_exponential_double(self, weighta, weightb, m):
+        self._ex_weight = torch.tensor(weighta, dtype=torch.float32, device=self._device) if (weighta is not None) else None
+        self._ey_weight = torch.tensor(weightb, dtype=torch.float32, device=self._device) if (weightb is not None) else None
+        self._ez_m      = torch.tensor(m,       dtype=torch.float32, device=self._device) if (m       is not None) else None
 
     def filter_set_fixed_joints(self, joint_orientation_map):
         if (joint_orientation_map is not None):
@@ -2230,6 +2257,13 @@ class renderer_smpl_filter:
         self._t1, self._t2, self._t = (transl,)*3
         self._state = 1
 
+    def _reset_des(self, global_orient, body_pose, betas, transl):
+        self._g1, self._g = (global_orient,)*2
+        self._p1, self._p = (body_pose,)*2
+        self._b1, self._b = (betas,)*2
+        self._t1, self._t = (transl,)*2
+        self._state = 1
+
     def _apply_fes(self, global_orient, body_pose, betas, transl):
         self._g = filter_exponential_single_step_r(self._g, global_orient, self._ef_weight[0])
         self._p = filter_exponential_single_step_r(self._p, body_pose,     self._ef_weight[1])
@@ -2243,7 +2277,19 @@ class renderer_smpl_filter:
         self._b1, self._b2, self._b = filter_exponential_brownd_step_l(self._b1, betas,         self._eb_weight[2], self._b2, self._eb_m[2])
         self._t1, self._t2, self._t = filter_exponential_brownd_step_l(self._t1, transl,        self._eb_weight[3], self._t2, self._eb_m[3])
         self._state = 2
-    
+
+    def _apply_des(self, global_orient, body_pose, betas, transl):
+        if (self._state == 1):
+            self._g2 = roma.rotmat_composition((roma.rotmat_inverse(self._g1), global_orient))
+            self._p2 = roma.rotmat_composition((roma.rotmat_inverse(self._p1), body_pose))
+            self._b2 = betas  - self._b1
+            self._t2 = transl - self._t1
+        self._g1, self._g2, self._g = filter_exponential_double_step_r(self._g1, global_orient, self._ex_weight[0], self._g2, self._ey_weight[0], self._ez_m[0])
+        self._p1, self._p2, self._p = filter_exponential_double_step_r(self._p1, body_pose,     self._ex_weight[1], self._p2, self._ey_weight[1], self._ez_m[1])
+        self._b1, self._b2, self._b = filter_exponential_double_step_l(self._b1, betas,         self._ex_weight[2], self._b2, self._ey_weight[2], self._ez_m[2])
+        self._t1, self._t2, self._t = filter_exponential_double_step_l(self._t1, transl,        self._ex_weight[3], self._t2, self._ey_weight[3], self._ez_m[3])
+        self._state = 2
+
     def _apply_fjo(self, global_orient, body_pose, betas, transl):
         for joint, orientation in self._ow_joints.items():
             if (joint != 0):
@@ -2273,7 +2319,9 @@ class renderer_smpl_filter:
 
     def apply(self, global_orient, body_pose, betas, transl):
         self._apply_fjo(global_orient, body_pose, betas, transl)
-        if   (self._eb_weight is not None):
+        if   (self._ex_weight is not None):
+            self._reset_des(global_orient, body_pose, betas, transl) if (self._state < 1) else self._apply_des(global_orient, body_pose, betas, transl)
+        elif (self._eb_weight is not None):
             self._reset_les(global_orient, body_pose, betas, transl) if (self._state < 1) else self._apply_les(global_orient, body_pose, betas, transl)
         elif (self._ef_weight is not None):
             self._reset_fes(global_orient, body_pose, betas, transl) if (self._state < 1) else self._apply_fes(global_orient, body_pose, betas, transl)
@@ -2323,6 +2371,9 @@ class renderer_smpl_control:
 
     def filter_set_exponential_brownd(self, weights, m, id='patient'):
         self._filters[id].filter_set_exponential_brownd(weights, m)
+
+    def filter_set_exponential_double(self, weighta, weightb, m, id='patient'):
+        self._filters[id].filter_set_exponential_double(weighta, weightb, m)
 
     def filter_set_fixed_joints(self, joint_orientation_map, id='patient'):
         self._filters[id].filter_set_fixed_joints(joint_orientation_map)
@@ -2437,6 +2488,9 @@ class renderer:
 
     def smpl_filter_set_exponential_brownd(self, weights, m, id='patient'):
         self._smpl_control.filter_set_exponential_brownd(weights, m, id)
+
+    def smpl_filter_set_exponential_double(self, weighta, weightb, m, id='patient'):
+        self._smpl_control.filter_set_exponential_double(weighta, weightb, m, id)
 
     def smpl_filter_set_fixed_joints(self, joint_orientation_map, id='patient'):
         self._smpl_control.filter_set_fixed_joints(joint_orientation_map, id)
@@ -2665,7 +2719,7 @@ class context_local:
 
 
 class renderer_context(renderer):
-    def __init__(self, settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp, settings_smpl_model, settings_smpl_filter_reset=None, settings_smpl_filter_bounding_box=None, settings_smpl_filter_forward_face=None, settings_smpl_filter_exponential_single=None, settings_smpl_filter_exponential_brownd=None, settings_smpl_filter_fixed_joints=None, settings_smpl_filter_linger=None, enable_context_thread=False):
+    def __init__(self, settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp, settings_smpl_model, settings_smpl_filter_reset=None, settings_smpl_filter_bounding_box=None, settings_smpl_filter_forward_face=None, settings_smpl_filter_exponential_single=None, settings_smpl_filter_exponential_brownd=None, settings_smpl_filter_exponential_double=None, settings_smpl_filter_fixed_joints=None, settings_smpl_filter_linger=None, enable_context_thread=False):
         self.__ready = False
         self.__settings_renderer = {'settings_offscreen' : settings_offscreen, 'settings_scene' : settings_scene, 'settings_camera' : settings_camera, 'settings_camera_transform' : settings_camera_transform, 'settings_lamp' : settings_lamp}
         self.__settings_smpl_model = settings_smpl_model
@@ -2674,6 +2728,7 @@ class renderer_context(renderer):
         self.__settings_smpl_filter_forward_face = settings_smpl_filter_forward_face if (settings_smpl_filter_forward_face is not None) else renderer_create_settings_smpl_filter_forward_face()
         self.__settings_smpl_filter_exponential_single = settings_smpl_filter_exponential_single if (settings_smpl_filter_exponential_single is not None) else renderer_create_settings_smpl_filter_exponential_single()
         self.__settings_smpl_filter_exponential_brownd = settings_smpl_filter_exponential_brownd if (settings_smpl_filter_exponential_brownd is not None) else renderer_create_settings_smpl_filter_exponential_brownd()
+        self.__settings_smpl_filter_exponential_double = settings_smpl_filter_exponential_double if (settings_smpl_filter_exponential_double is not None) else renderer_create_settings_smpl_filter_exponential_double()
         self.__settings_smpl_filter_fixed_joints = settings_smpl_filter_fixed_joints if (settings_smpl_filter_fixed_joints is not None) else renderer_create_settings_smpl_filter_fixed_joints()
         self.__settings_smpl_filter_linger = settings_smpl_filter_linger if (settings_smpl_filter_linger is not None) else renderer_create_settings_smpl_filter_linger()
         self.__context_thread = context_thread(True) if (enable_context_thread) else context_local(True)
@@ -2688,6 +2743,7 @@ class renderer_context(renderer):
         self.smpl_filter_set_forward_face(**self.__settings_smpl_filter_forward_face)
         self.smpl_filter_set_exponential_single(**self.__settings_smpl_filter_exponential_single)
         self.smpl_filter_set_exponential_brownd(**self.__settings_smpl_filter_exponential_brownd)
+        self.smpl_filter_set_exponential_double(**self.__settings_smpl_filter_exponential_double)
         self.smpl_filter_set_fixed_joints(**self.__settings_smpl_filter_fixed_joints)
         self.smpl_filter_set_linger(**self.__settings_smpl_filter_linger)
 
