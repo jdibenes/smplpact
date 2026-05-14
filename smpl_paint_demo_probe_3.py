@@ -63,12 +63,16 @@ class demo:
         # Create offscreen renderer
         cfg_offscreen = smplpact.renderer_create_settings_offscreen(self._viewport_width, self._viewport_height)
         cfg_scene = smplpact.renderer_create_settings_scene()
-        cfg_camera = smplpact.renderer_create_settings_camera(self._realsense_K[0,0], self._realsense_K[1,1], self._realsense_K[0,2], self._realsense_K[1,2])
+        cfg_camera = smplpact.renderer_create_settings_camera(self._realsense_K[0,0], self._realsense_K[1,1], self._viewport_width / 2, self._viewport_height / 2)
         cfg_camera_transform = smplpact.renderer_create_settings_camera_transform()#pitch=180, distance=0, min_pitch=-180, max_pitch=180, znear=0)
         cfg_lamp = smplpact.renderer_create_settings_lamp()
         cfg_smpl_model = smplpact.renderer_create_settings_smpl_model(self._smpl_uv_path, self._texture_array.shape, self._smpl_model_path, 10, self._device)
+        cfg_smpl_filter_reset = smplpact.renderer_create_settings_smpl_filter_reset(smplpact.smpl_camera_align_I0)
+        cfg_smpl_filter_exponential_single = smplpact.renderer_create_settings_smpl_filter_exponential_single([0.05, 0.05, 0.05, 0.05])
+        cfg_smpl_filter_exponential_brownd = smplpact.renderer_create_settings_smpl_filter_exponential_brownd([0.025, 0.025, 0.025, 0.025],[500,500,500,500])
+        cfg_smpl_filter_exponential_double = smplpact.renderer_create_settings_smpl_filter_exponential_double([0.25, 0.25, 0.25, 0.25],[0.25, 0.25, 0.25, 0.25],[1.0, 1.0, 1.0, 1.0])
 
-        self._offscreen_renderer = smplpact.renderer_context(cfg_offscreen, cfg_scene, cfg_camera, cfg_camera_transform, cfg_lamp, cfg_smpl_model)
+        self._offscreen_renderer = smplpact.renderer_context(cfg_offscreen, cfg_scene, cfg_camera, cfg_camera_transform, cfg_lamp, cfg_smpl_model, cfg_smpl_filter_reset, None, None, cfg_smpl_filter_exponential_single, cfg_smpl_filter_exponential_brownd, cfg_smpl_filter_exponential_double)
         
         # Create UI elements
         self._cursor_mesh = trimesh.creation.icosphere(radius=self._cursor_radius)
@@ -132,14 +136,16 @@ class demo:
 
     def _paint(self):
         # SMPL params to mesh
-        smpl_params, smpl_K = self._offscreen_renderer.smpl_unpack(self._pose_message)
-        smpl_ok, smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, smpl_K.T, self._realsense_K.T)
-        smpl_data = smpl_result.at(0)
+        #smpl_params, smpl_K = self._offscreen_renderer.smpl_unpack(self._pose_message)
+        #smpl_ok, smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, smpl_K.T, self._realsense_K.T)
+        #smpl_data = smpl_result.at(0)
+        smpl_meshes = self._offscreen_renderer.smpl_get_meshes(self._pose_message, self._realsense_K.T)
+        smpl_data = smpl_meshes['patient']
         
         # Compute pose to set mesh upright
         # Poses convert from object to world
-        smpl_mesh = smplpact.mesh_create(smpl_data.vertices, smpl_data.faces, smpl_data.face_normals)
-        smpl_mesh_pose = smplpact.math_invert_pose(smplpact.smpl_mesh_chart_openpose(smpl_mesh, smpl_data.joints).create_frame('body_center').to_pose()).T
+        #smpl_mesh = smplpact.mesh_create(smpl_data.vertices, smpl_data.faces, smpl_data.face_normals)
+        smpl_mesh_pose = smplpact.smpl_region_align(smpl_data, 'body_center')#smplpact.math_invert_pose(smplpact.smpl_mesh_chart_openpose(smpl_mesh, smpl_data.joints).create_frame('body_center').to_pose())
 
         # Add SMPL mesh to the main scene
         smpl_mesh_id = self._offscreen_renderer.mesh_add_smpl('smpl', 'patient', smpl_data, self._texture_array, smpl_mesh_pose)
@@ -149,13 +155,13 @@ class demo:
         probe_position = ((np.linalg.inv(self._realsense_K) @ np.array([[probe['tip_x_px']],[probe['tip_y_px']],[1]], dtype=np.float32)) * probe['tip_z_m']).reshape((1, 3))
         probe_position = probe_position + smplpact.math_normalize(probe_position)[0] * 0.08 # heuristic approximation (probe height ~[8-10]cm?)
         
-        self._cursor_pose[:3, 3:4] = smplpact.math_transform_points(probe_position, smpl_mesh_pose.T, inverse=False).T
+        self._cursor_pose[3:4, :3] = smplpact.math_transform_points(probe_position, smpl_mesh_pose, inverse=False)
         
         # Add cursor to the main scene        
         cursor_mesh_id = self._offscreen_renderer.mesh_add_user('ui', 'cursor', self._cursor_mesh, self._cursor_pose)
 
         # Find closest point to mesh and paint
-        cursor_anchor = self._offscreen_renderer.mesh_operation_closest(smpl_mesh_id, self._cursor_pose[:3, 3:4].T)
+        cursor_anchor = self._offscreen_renderer.mesh_operation_closest(smpl_mesh_id, self._cursor_pose[3:4, :3])
         if (cursor_anchor.point is not None):
             # Solid color option
             self._offscreen_renderer.smpl_paint_brush_solid(smpl_mesh_id, cursor_anchor, self._brush_size, self._brush_color_center, fill_test=0.25)

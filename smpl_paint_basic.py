@@ -86,9 +86,11 @@ class demo:
 
     def _paint(self):
         # SMPL params to mesh
-        smpl_params, smpl_K = self._offscreen_renderer.smpl_unpack(self._pose_message)
-        smpl_ok, smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, smpl_K.T, self._realsense_K.T)
-        smpl_data = smpl_result.at(0)
+        #smpl_params, smpl_K = self._offscreen_renderer.smpl_unpack(self._pose_message)
+        #smpl_ok, smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, smpl_K.T, self._realsense_K.T)
+        #smpl_data = smpl_result.at(0)
+        smpl_meshes = self._offscreen_renderer.smpl_get_meshes(self._pose_message, self._realsense_K.T)
+        smpl_data = smpl_meshes['patient']
 
         # Compute pose to set mesh upright
         # Poses convert from object to world
@@ -96,7 +98,7 @@ class demo:
         chart = smplpact.smpl_mesh_chart_openpose(smpl_mesh, smpl_data.joints)
         frame = chart.create_frame('body_center')
         pose = frame.to_pose()
-        smpl_mesh_pose = smplpact.math_invert_pose(pose).T
+        smpl_mesh_pose = smplpact.math_invert_pose(pose)
 
         # Add SMPL mesh to the main scene
         smpl_mesh_id = self._offscreen_renderer.mesh_add_smpl('smpl', 'patient', smpl_data, self._texture_array, smpl_mesh_pose)

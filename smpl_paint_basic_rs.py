@@ -47,16 +47,15 @@ class demo:
         self._texture_array = smplpact.texture_load_image(self._smpl_texture_path, load_alpha=self._smpl_texture_load_alpha)
 
         # Create offscreen renderer
-        fxy = self._realsense_K[0,0]
-
         cfg_offscreen = smplpact.renderer_create_settings_offscreen(self._viewport_width, self._viewport_height, 10)
         cfg_scene = smplpact.renderer_create_settings_scene()
-        cfg_camera = smplpact.renderer_create_settings_camera(fxy, fxy, self._realsense_K[0,2], self._realsense_K[1,2])
+        cfg_camera = smplpact.renderer_create_settings_camera(self._realsense_K[0,0], self._realsense_K[1,1], self._realsense_K[0,2], self._realsense_K[1,2])
         cfg_camera_transform = smplpact.renderer_create_settings_camera_transform(pitch=180, distance=0, min_pitch=-180, max_pitch=180, znear=0)
         cfg_lamp = smplpact.renderer_create_settings_lamp()
         cfg_smpl_model = smplpact.renderer_create_settings_smpl_model(self._smpl_uv_path, self._texture_array.shape, self._smpl_model_path, 10, self._device)
+        cfg_smpl_filter_reset = smplpact.renderer_create_settings_smpl_filter_reset(smplpact.smpl_camera_align_Rt)
 
-        self._offscreen_renderer = smplpact.renderer_context(cfg_offscreen, cfg_scene, cfg_camera, cfg_camera_transform, cfg_lamp, cfg_smpl_model, enable_context_thread=False)
+        self._offscreen_renderer = smplpact.renderer_context(cfg_offscreen, cfg_scene, cfg_camera, cfg_camera_transform, cfg_lamp, cfg_smpl_model, cfg_smpl_filter_reset, enable_context_thread=False)
 
         # Load test pose message
         with open(self._smpl_message_path, 'rt') as json_file:
@@ -91,9 +90,7 @@ class demo:
 
     def _paint(self):
         # SMPL params to mesh
-        smpl_params, smpl_K = self._offscreen_renderer.smpl_unpack(self._pose_message)
-        smpl_ok, smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, smpl_K.T, self._realsense_K.T)
-        smpl_data = smpl_result.at(0)
+        smpl_meshes = self._offscreen_renderer.smpl_get_meshes(self._pose_message, self._realsense_K.T)
 
         # Compute pose to set mesh upright
         # Poses convert from object to world
@@ -104,7 +101,7 @@ class demo:
         smpl_mesh_pose = np.eye(4, 4, dtype=np.float32)#smplpact.math_invert_pose(pose).T
 
         # Add SMPL mesh to the main scene
-        smpl_mesh_id = self._offscreen_renderer.mesh_add_smpl('smpl', 'patient', smpl_data, self._texture_array, smpl_mesh_pose)
+        smpl_mesh_id = self._offscreen_renderer.mesh_add_smpl('smpl', 'patient', smpl_meshes['patient'], self._texture_array, smpl_mesh_pose)
         world_mesh_id = self._offscreen_renderer.mesh_add_pointcloud('world', 'point_could', self._point_cloud_points, self._point_cloud_colors, smpl_mesh_pose)
 
         # Add your paint code here

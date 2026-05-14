@@ -43,7 +43,7 @@ class demo:
         self._camera_use_plane = True
         self._camera_focus_factor = 1.25
 
-        self._text_font_name = 'FreeSans.ttf'
+        self._text_font_name = 'arial.ttf'
         self._text_font_size = 512
         self._text_font_color = (255, 0, 0, 255)
         self._text_canvas_color = (255, 255, 255, 255)
@@ -85,11 +85,13 @@ class demo:
         cfg_offscreen = smplpact.renderer_create_settings_offscreen(self._viewport_width, self._viewport_height)
         cfg_scene = smplpact.renderer_create_settings_scene()
         cfg_camera = smplpact.renderer_create_settings_camera(fxy, fxy, self._viewport_width // 2, self._viewport_height // 2)
-        cfg_camera_transform = smplpact.renderer_create_settings_camera_transform()
+        #cfg_camera_transform = smplpact.renderer_create_settings_camera_transform()
+        cfg_camera_transform = smplpact.renderer_create_settings_camera_transform_opencv()
         cfg_lamp = smplpact.renderer_create_settings_lamp()
         cfg_smpl_model = smplpact.renderer_create_settings_smpl_model(self._smpl_uv_path, self._texture_array.shape, self._smpl_model_path, 10, self._device)
 
         self._offscreen_renderer = smplpact.renderer_context(cfg_offscreen, cfg_scene, cfg_camera, cfg_camera_transform, cfg_lamp, cfg_smpl_model)
+        self._camera_controller = smplpact.renderer_camera_controller(self._offscreen_renderer, smplpact.ord_alpha('d'), smplpact.ord_alpha('a'), smplpact.ord_alpha('s'), smplpact.ord_alpha('w'), smplpact.ord_alpha('f'), smplpact.ord_alpha('r'), smplpact.ord_alpha('m'), smplpact.ord_alpha('n'), smplpact.ord_alpha('u'), smplpact.ord_alpha('j'), smplpact.ord_alpha('k'), smplpact.ord_alpha('i'), self._camera_yaw_increment, self._camera_pitch_increment, self._camera_distance_increment, self._camera_distance_increment, self._camera_distance_increment, self._camera_distance_increment, True)
 
         # Load test pose message
         with open(self._smpl_message_path, 'rt') as json_file:
@@ -111,33 +113,28 @@ class demo:
         print(f'SMPL texture shape: {self._texture_array.shape}')
 
         # Run inference and painting
-        start = time.perf_counter()
-        count = 0
+        fps_counter = smplpact.fps_counter()
+        fps_counter.reset()
         while (True):
             with self._offscreen_renderer:
                 status = self._paint()
 
-            count += 1
-            end = time.perf_counter()
-            delta = end - start
-            if (delta > self._fps_period):
-                print(f'FPS: ', count / delta)
-                start = end
-                count = 0
-
+            fps_counter.increment()
+            if (fps_counter.elapsed() > self._fps_period):
+                print(f'FPS: ', fps_counter.sample())
+                
             if (not status):
                 break
 
     def _paint(self):
         # SMPL params to mesh
-        smpl_params, smpl_K = self._offscreen_renderer.smpl_unpack(self._pose_message)
-        smpl_ok, smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, smpl_K.T, smpl_K.T)
-        smpl_data = smpl_result.at(0)
+        smpl_meshes = self._offscreen_renderer.smpl_get_meshes(self._pose_message, None)
+        smpl_data = smpl_meshes['patient']
 
         # Compute pose to set mesh upright
         # Poses convert from object to world
         smpl_mesh = smplpact.mesh_create(smpl_data.vertices, smpl_data.faces)
-        smpl_mesh_pose = smplpact.math_invert_pose(smplpact.smpl_mesh_chart_openpose(smpl_mesh, smpl_data.joints).create_frame('body_center').to_pose()).T
+        smpl_mesh_pose = smplpact.math_invert_pose(smplpact.smpl_mesh_chart_openpose(smpl_mesh, smpl_data.joints).create_frame('body_center').to_pose())
 
         # Add SMPL mesh to the main scene
         smpl_mesh_id = self._offscreen_renderer.mesh_add_smpl('smpl', 'patient', smpl_data, self._texture_array, smpl_mesh_pose)
@@ -148,13 +145,8 @@ class demo:
         smpl_next_region = self._smpl_regions[self._smpl_region_index]
         
         if (smpl_next_region != self._smpl_region):
-            smpl_frame = self._offscreen_renderer.smpl_chart_create_frame(smpl_mesh_id, smpl_next_region)
+            self._offscreen_renderer.camera_focus_smpl_region(smpl_mesh_id, smpl_next_region, self._camera_focus_factor)
             
-            focus_center = smplpact.math_transform_points(smpl_frame.center, smpl_mesh_pose.T, inverse=False)
-            focus_points = smplpact.math_transform_points(smpl_frame.points, smpl_mesh_pose.T, inverse=False)
-            focus_distance = self._offscreen_renderer.camera_solve_fov_z(focus_center, focus_points)
-
-            self._offscreen_renderer.camera_adjust_parameters(center=focus_center, distance=self._camera_focus_factor * focus_distance, relative=False)
             self._cursor_offset = 0
             self._cursor_angle = 0
             self._smpl_region = smpl_next_region
@@ -168,8 +160,8 @@ class demo:
         local_cursor_orientation = np.vstack((np.cross(smpl_frame.up, -cursor_anchor.direction), smpl_frame.up, -cursor_anchor.direction))
         local_cursor_position = (cursor_anchor.point + self._cursor_height * cursor_anchor.direction) if (cursor_anchor.point is not None) else cursor_anchor.position
         
-        self._cursor_pose[0:3, 0:3] = smplpact.math_transform_bearings(local_cursor_orientation, smpl_mesh_pose.T, inverse=False).T
-        self._cursor_pose[0:3, 3:4] = smplpact.math_transform_points(local_cursor_position, smpl_mesh_pose.T, inverse=False).T
+        self._cursor_pose[0:3, 0:3] = smplpact.math_transform_bearings(local_cursor_orientation, smpl_mesh_pose, inverse=False)
+        self._cursor_pose[3:4, 0:3] = smplpact.math_transform_points(local_cursor_position, smpl_mesh_pose, inverse=False)
         
         # Add cursor to the main scene
         cursor_mesh_id = self._offscreen_renderer.mesh_add_user('ui', 'cursor', self._cursor_mesh, self._cursor_pose)
@@ -177,13 +169,11 @@ class demo:
         # Perform ray casting from camera to mesh
         # This will be used to paint on the mesh where the camera is looking
         camera_pose = self._offscreen_renderer.camera_get_transform_local()
-        camera_position = camera_pose[:3, 3:4].T
-        camera_forward = -camera_pose[:3, 2:3].T
-        camera_anchor = self._offscreen_renderer.mesh_operation_raycast(smpl_mesh_id, camera_position, camera_forward)
+        camera_anchor = self._offscreen_renderer.mesh_operation_raycast_camera(smpl_mesh_id, camera_pose, np.eye(3, 3, dtype=float), np.array([[0, 0, 1]], dtype=np.float32))
 
         # If raycast did not intersect the mesh then use the closest mesh point
         if (camera_anchor.point is None):
-            camera_anchor = self._offscreen_renderer.mesh_operation_closest(smpl_mesh_id, camera_position)
+            camera_anchor = self._offscreen_renderer.mesh_operation_closest_camera(smpl_mesh_id, camera_pose)
 
         # Paint SMPL mesh
         # Paint decal at cursor position
@@ -209,19 +199,22 @@ class demo:
 
         # Render
         color, depth = self._offscreen_renderer.scene_render()
-
+        color = cv2.cvtColor(color, cv2.COLOR_RGB2BGR)
         # Render focused joints
         #color = color.copy()
-        #world_points = smplpact.math_transform_points(smpl_frame.points, smpl_mesh_pose.T, inverse=False)
-        #image_points, local_points, camera_points = self._offscreen_renderer.camera_project_points(world_points, convention=(1, -1, -1))
+        world_points = smplpact.math_transform_points(smpl_frame.points, smpl_mesh_pose, inverse=False)
+        image_points, camera_points = self._offscreen_renderer.camera_project_points(world_points)
 
         #for i in range(0, image_points.shape[0]):
-        #    if (local_points[i, 2] > 0):
+        #    if (camera_points[i, 2] > 0):
         #        center = (int(image_points[i, 0]), int(image_points[i, 1]))
+        #        print(center)
         #        color = cv2.circle(color, center, self._joint_projection_radius, self._joint_projection_color, self._joint_projection_thickness)
+        
+        
 
         # Show rendered image
-        cv2.imshow('SMPL Paint Demo', cv2.cvtColor(color, cv2.COLOR_RGB2BGR))
+        cv2.imshow('SMPL Paint Demo', color)
 
         # Process keyboard input
         key = cv2.waitKey(1) & 0xFF
@@ -238,30 +231,10 @@ class demo:
         if (key == 53): # 5
             self._cursor_angle -= self._cursor_angle_increment
 
-        if (key == 68 or key == 100): # d
-            self._offscreen_renderer.camera_adjust_parameters(yaw=self._camera_yaw_increment, relative=True)
-        if (key == 65 or key == 97): # a
-            self._offscreen_renderer.camera_adjust_parameters(yaw=-self._camera_yaw_increment, relative=True)
-        if (key == 87 or key == 119): # w
-            self._offscreen_renderer.camera_adjust_parameters(pitch=-self._camera_pitch_increment, relative=True)
-        if (key == 83 or key == 115): # s
-            self._offscreen_renderer.camera_adjust_parameters(pitch=self._camera_pitch_increment, relative=True)
-        if (key == 82 or key == 114): #r
-            self._offscreen_renderer.camera_adjust_parameters(distance=-self._camera_distance_increment, relative=True)
-        if (key == 70 or key == 102): #f
-            self._offscreen_renderer.camera_adjust_parameters(distance=self._camera_distance_increment, relative=True)
-        if (key == 78 or key == 110): #n
-            self._offscreen_renderer.camera_move_center([-self._camera_distance_increment, 0, 0], plane=self._camera_use_plane)
-        if (key == 77 or key == 109): #m
-            self._offscreen_renderer.camera_move_center([self._camera_distance_increment, 0, 0], plane=self._camera_use_plane)
-        if (key == 85 or key == 117): #u
-            self._offscreen_renderer.camera_move_center([0, self._camera_distance_increment, 0], plane=self._camera_use_plane)
-        if (key == 74 or key == 106): #j
-            self._offscreen_renderer.camera_move_center([0, -self._camera_distance_increment, 0], plane=self._camera_use_plane)
-        if (key == 73 or key == 105): #i
-            self._offscreen_renderer.camera_move_center([0, 0, -self._camera_distance_increment], plane=self._camera_use_plane)
-        if (key == 75 or key == 107): #k
-            self._offscreen_renderer.camera_move_center([0, 0, self._camera_distance_increment], plane=self._camera_use_plane)
+        if (key == 54): # 6
+            self._offscreen_renderer.camera_match_opencv()
+
+        self._camera_controller.update(key)
 
         if (key == 27): # esc
             return False
