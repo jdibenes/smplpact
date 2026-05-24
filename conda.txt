@@ -1,3 +1,16 @@
 conda create -n smplpact python=3.10
 conda activate smplpact
-pip install torch==2.0.0 torchvision==0.15.1 torchaudio==2.0.1 --index-url https://download.pytorch.org/whl/cu118
+pip install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu118
+pip install opencv-python==4.11.0.86
+pip uninstall numpy
+pip install numpy==1.26.4
+pip install git+https://github.com/mattloper/chumpy --no-build-isolation
+## Successfully installed chumpy-0.71 scipy-1.15.3 six-1.17.0
+pip install trimesh
+pip install pyrender
+## Successfully installed PyOpenGL-3.1.0 freetype-py-2.5.1 imageio-2.37.3 pyglet-2.1.14 pyrender-0.1.45
+pip install smplx
+pip install roma
+pip install rtree
+
+pip install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128
