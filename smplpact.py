@@ -2437,7 +2437,7 @@ class renderer_smpl_control:
         if (batches < 1):
             return None
         smpl_pose = torch.tensor([person['smpl_pose'] for person in person_list], dtype=torch.float32, device=self._device)
-        global_orient = smpl_pose[:, 0:1, :, :]
+        global_orient = smpl_pose[:, :1, :, :]
         body_pose = smpl_pose[:, 1:, :, :]
         betas = torch.tensor([person['smpl_shape'] for person in person_list], dtype=torch.float32, device=self._device)
         camera_translation = torch.tensor([person['camera_params'] for person in person_list], dtype=torch.float32, device=self._device)
@@ -2447,15 +2447,26 @@ class renderer_smpl_control:
         K_smpl = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]], dtype=np.float32) 
         return (batches, smpl_params, K_smpl.T) # tuple return
     
+    def _unpack_default(self, message):
+        if (not message['valid']):
+            return None
+        batches = message['global_orient'].shape[0]
+        smpl_params = { 'transl' : message['transl'] } | message['smpl_params']
+        K_smpl = message['cam_int']
+        return (batches, smpl_params, K_smpl.T) # tuple return
+    
     def _unpack(self, message):
         name = message.get('model_type', 'cliff')
-        return self._unpack_camerahmr(message) if (name == 'camerahmr') else self._unpack_cliff(message) if (name == 'cliff') else None
+        return self._unpack_camerahmr(message) if (name == 'camerahmr') else self._unpack_cliff(message) if (name == 'cliff') else self._unpack_default(message)
     
     def get_meshes(self, message, K_dst, index2id={ 0 : 'patient' }):
         result = self._unpack(message)
         if (result is not None):
             self._update(result[0], result[1], result[2], K_dst, index2id)
         return self._claim_all()
+    
+    def make_message(self, smpl_params, camera_intrinsics, camera_translation, valid=True):
+        return { 'model_type' : 'default', 'valid' : valid, 'smpl_params' : smpl_params, 'cam_int' : camera_intrinsics, 'transl' : camera_translation }
 
 
 #------------------------------------------------------------------------------
