@@ -92,7 +92,8 @@ def math_to_homogeneous(array):
 
 
 def math_to_inhomogeneous(array):
-    return math_inhomogeneous_component(array) / math_homogeneous_component(array)
+    h = math_homogeneous_component(array)
+    return (math_inhomogeneous_component(array) / h, h) # tuple return
 
 
 #------------------------------------------------------------------------------
@@ -158,6 +159,10 @@ def geometry_distance_point_segment(line_start, line_end, point):
     return math_norm(xz)
 
 
+def geometry_project(K, pose, points):
+    return math_to_inhomogeneous(math_transform_K(math_transform_points(points, pose, False), K, False))
+
+
 #------------------------------------------------------------------------------
 # Texture Processing
 #------------------------------------------------------------------------------
@@ -185,7 +190,7 @@ class mesh_uv_descriptor:
 def texture_load_image(filename_image, load_alpha=True, alpha=255):
     rgb = cv2.imread(filename_image, cv2.IMREAD_COLOR_RGB)
     raw = cv2.imread(filename_image, cv2.IMREAD_UNCHANGED)
-    a = raw[:, :, 3] if ((load_alpha) and (raw.shape[2] == 4)) else (np.ones((rgb.shape[0], rgb.shape[1], 1), rgb.dtype) * alpha)
+    a = raw[:, :, 3] if ((load_alpha) and (raw.shape[2] == 4)) else np.full((rgb.shape[0], rgb.shape[1], 1), alpha, rgb.dtype)
     return np.dstack((rgb, a))
 
 
@@ -1096,7 +1101,7 @@ def smpl_camera_align_It(K_smpl, K_dst, points_world):
     n = points_world.shape[0]
     K = K_smpl @ np.linalg.inv(K_dst)
     b = points_world @ (K - np.eye(3, dtype=points_world.dtype))
-    a = (points_world / points_world[:, 2:3]) @ K
+    a = math_transform_K(points_world / points_world[:, 2:3], K, False)
     f = np.ones((n, 1), dtype=points_world.dtype)
     z = np.zeros((n, 1), dtype=points_world.dtype)
     e = np.vstack((np.hstack((f, z, -a[:, 0:1])), np.hstack((z, f, -a[:, 1:2]))))
@@ -2827,4 +2832,143 @@ class fps_counter:
         if (not self._manual_reset):
             self.reset()
         return fps
+
+
+
+
+
+class mesh_neighborhood_operation_uvmap:
+    def __init__(self, mesh_vertices, mesh_faces, mesh_uvx, target, tolerance=0):
+        self._mesh_vertices = mesh_vertices
+        self._mesh_faces = mesh_faces
+        self._mesh_uvx = mesh_uvx
+        self._target = target
+        self._tolerance = tolerance
+
+    def paint(self, face_index, level):
+        vertex_indices = self._mesh_faces[face_index]
+        self._simplex_3d = self._mesh_vertices[vertex_indices, :]
+        self._level = level
+        self._result = (mesh_neighborhood_processor_command.IGNORE, None)
+        texture_processor(self._mesh_uvx[vertex_indices, :], self._paint_uv, self._tolerance)
+        return self._result
+    
+    def _paint_uv(self, pixels, weights):
+        points = weights @ self._simplex_3d
+        self._result = self._target(pixels, points, self._level)
+
+
+class paint_uvmap_projection:
+    def __init__(self, K, pose, id, depth, uv2uv, idmap):
+        self._K = K
+        self._pose = pose
+        self._id = id
+        self._depth = depth
+        self._uv2uv = uv2uv
+        self._idmap = idmap
+        self._w = depth.shape[1]
+        self._h = depth.shape[0]
+
+    def paint(self, uv_dst, points_dst, level):
+        #print('///paint')
+        #print(uv_dst.dtype)
+        #print(points_dst.shape)
+        #print(level)
+
+        command = mesh_neighborhood_processor_command.IGNORE
+        uv_src, z = geometry_project(self._K, self._pose, points_dst)
+
+        #print(uv_src.shape)
+        #print(z.shape)
+
+        z = z[:, 0]
+        uv_src = np.rint(uv_src).astype(np.int32)
+        mask = texture_test_inside(self._depth, uv_src[:, 0], uv_src[:, 1])
+        if (not np.any(mask)):
+            return (command, np.empty((0,2),dtype=np.float64))
+        uv_src = uv_src[mask, :]
+        uv_dst = uv_dst[mask, :]
+        z = z[mask]
+        mask = (z > 0) & (z < self._depth[uv_src[:, 1], uv_src[:, 0]])
+        if (not np.any(mask)):
+            return (command, np.empty((0,2),dtype=np.float64))
+        uv_src = uv_src[mask, :]
+        uv_dst = uv_dst[mask, :]
+        z = z[mask]
+        self._depth[uv_src[:, 1], uv_src[:, 0]] = z
+        self._uv2uv[uv_src[:, 1], uv_src[:, 0], :] = uv_dst
+        self._idmap[uv_src[:, 1], uv_src[:, 0]] = self._id
+        
+        return (command, uv_dst)
+
+
+#------------------------------------------------------------------------------
+# Composite Painting
+#------------------------------------------------------------------------------
+
+class composite_target:
+    KIND_SMPL = 0
+
+    def __init__(self, kind, mesh_vertices, mesh_uvx, mesh_faces, render_target):
+        self.kind = kind
+        self.mesh_vertices = mesh_vertices
+        self.mesh_uvx = mesh_uvx
+        self.mesh_faces = mesh_faces
+        self.render_target = render_target
+
+
+def paint_projection(items, K, pose, image, tolerance=0):
+    h, w = image.shape[0:2]
+    c = len(items)
+
+    depth = np.full((h, w), np.inf, np.float32)
+    uv2uv = np.full((h, w, 2), -1, np.int64)
+    idmap = np.full((h, w), np.int32)
+    
+    for item_id in range(0, c):
+        item = items[item_id]
+        if item.kind == composite_target.KIND_SMPL:
+            uvm = paint_uvmap_projection(K, pose, item_id, depth, uv2uv, idmap)
+            mno = mesh_neighborhood_operation_uvmap(item.mesh_vertices, item.mesh_faces, item.mesh_uvx, uvm.paint, tolerance)
+            for face_index in range(0, item.mesh_faces.shape[0]):
+                mno.paint(face_index, -1)
+
+    return depth, uv2uv, idmap
+
+
+
+
+def paint_projection_2(items, K, pose, image, tolerance=0):
+    h, w = image.shape[0:2]
+    c = len(items)
+
+    depth = np.full((h, w), np.inf, np.float32)
+    uv2uv = np.full((h, w, 2), -1, np.int64)
+    idmap = np.full((h, w), np.int32)
+    
+    for item_id in range(0, c):
+        item = items[item_id]
+        if item.kind == composite_target.KIND_SMPL:
+            for face_index in range(0, item.mesh_faces.shape[0]):
+                item.mesh_vertices
+                
+
+
+
+    
+            #uvm = paint_uvmap_projection(K, pose, item_id, depth, uv2uv, idmap)
+            #mno = mesh_neighborhood_operation_uvmap(item.mesh_vertices, item.mesh_faces, item.mesh_uvx, uvm.paint, tolerance)
+            #mno.paint(face_index, -1)
+
+    return depth, uv2uv, idmap
+
+
+
+            
+
+
+
+
+
+
 
