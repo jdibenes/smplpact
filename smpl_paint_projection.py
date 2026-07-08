@@ -118,6 +118,8 @@ class demo:
 
         uv_data = self._offscreen_renderer.smpl_get_uv()#_mesh_control._uv_set
 
+        
+        
 
         if (not self._proj_set):
             
