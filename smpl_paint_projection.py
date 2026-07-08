@@ -123,11 +123,12 @@ class demo:
             
             self._proj_set = False
 
+            proj_H = np.eye(3, 3, dtype=np.float32)
             proj_base = np.array([[1,0,0,0],[0,-1,0,0],[0,0,-1,0],[0,0,0,1]], dtype=np.float32)
             proj_pose = np.linalg.inv(self._offscreen_renderer.camera_get_pose()) @ proj_base
             mask_normals = smplpact.texture_map_test_normal(self._uv_inverse.faces, smpl_data.face_normals, proj_pose)
             points_3d = smplpact.texture_map_to_3d(uv_data.faces_b, smpl_data.vertices_uv, self._uv_inverse.faces[mask_normals], self._uv_inverse.weights[mask_normals] )
-            color, blend_mask = smplpact.texture_map_project_mesh(self._proj_image, None, self._realsense_K.T, proj_pose, points_3d, self._uv_inverse.pixels[mask_normals], self._uv_inverse.scaled_width, self._uv_inverse.scaled_height, self._uv_inverse.width, self._uv_inverse.height, False)
+            color, blend_mask = smplpact.texture_map_project_mesh(self._proj_image, proj_H, self._realsense_K.T, proj_pose, points_3d, self._uv_inverse.pixels[mask_normals], self._uv_inverse.scaled_width, self._uv_inverse.scaled_height, self._uv_inverse.width, self._uv_inverse.height, False)
             
             
             #self._texture_array[mask != 0, 0:3] = color[mask != 0, :]
