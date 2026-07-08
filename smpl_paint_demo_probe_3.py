@@ -79,7 +79,7 @@ class demo:
         self._cursor_pose = np.eye(4, dtype=np.float32)
 
         # Load dataset
-        files, folders = smplpact.scan_path(self._smpl_dataset_path, folders_sort=True, folders_key=lambda x : int(os.path.split(x)[1]))
+        files, folders = smplpact.path_scan(self._smpl_dataset_path, folders_sort=True, folders_key=lambda x : int(os.path.split(x)[1]))
         index = 0
 
         #print(files)
@@ -206,17 +206,17 @@ class demo:
         if (key == 70 or key == 102): #f
             self._offscreen_renderer.camera_adjust_parameters(distance=self._camera_distance_increment, relative=True)
         if (key == 78 or key == 110): #n
-            self._offscreen_renderer.camera_move_center([-self._camera_distance_increment, 0, 0], plane=self._camera_use_plane)
+            self._offscreen_renderer.camera_move_center(-self._camera_distance_increment, 0, 0, plane=self._camera_use_plane)
         if (key == 77 or key == 109): #m
-            self._offscreen_renderer.camera_move_center([self._camera_distance_increment, 0, 0], plane=self._camera_use_plane)
+            self._offscreen_renderer.camera_move_center(self._camera_distance_increment, 0, 0, plane=self._camera_use_plane)
         if (key == 85 or key == 117): #u
-            self._offscreen_renderer.camera_move_center([0, self._camera_distance_increment, 0], plane=self._camera_use_plane)
+            self._offscreen_renderer.camera_move_center(0, self._camera_distance_increment, 0, plane=self._camera_use_plane)
         if (key == 74 or key == 106): #j
-            self._offscreen_renderer.camera_move_center([0, -self._camera_distance_increment, 0], plane=self._camera_use_plane)
+            self._offscreen_renderer.camera_move_center(0, -self._camera_distance_increment, 0, plane=self._camera_use_plane)
         if (key == 73 or key == 105): #i
-            self._offscreen_renderer.camera_move_center([0, 0, -self._camera_distance_increment], plane=self._camera_use_plane)
+            self._offscreen_renderer.camera_move_center(0, 0, -self._camera_distance_increment, plane=self._camera_use_plane)
         if (key == 75 or key == 107): #k
-            self._offscreen_renderer.camera_move_center([0, 0, self._camera_distance_increment], plane=self._camera_use_plane)
+            self._offscreen_renderer.camera_move_center(0, 0, self._camera_distance_increment, plane=self._camera_use_plane)
 
         if (key == 27): # esc
             return False
