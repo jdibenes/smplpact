@@ -76,7 +76,8 @@ class demo:
             pass
 
         uv_data = self._offscreen_renderer._mesh_control._uv_set
-        self._uv_box, self._uv_faces, self._uv_weights, self._uv_w_s, self._uv_h_s = smplpact.uv2face(self._texture_array, uv_data.faces_b, uv_data.uvx_b)
+        #self._uv_box, self._uv_faces, self._uv_weights, self._uv_w_s, self._uv_h_s = smplpact.uv2face(self._texture_array, uv_data.faces_b, uv_data.uvx_b)
+        self._uv_inverse = smplpact.texture_map_invert(self._texture_array.shape, uv_data.faces_b, uv_data.uvx_b)
 
 
 
@@ -122,65 +123,19 @@ class demo:
             
             self._proj_set = False
 
-            #vert = smpl_data.vertices_uv[uv_data.faces_b, :]
-            #print('VERT')
-            #print(uv_data.faces_b.shape)
-            #print(smpl_data.vertices_uv.shape)
-            #print(vert.shape)
-            #print("TEST")
-            face_vertices  =uv_data.faces_b[self._uv_faces]
-            #print(face_vertices.shape)
-            uv_vertices = smpl_data.vertices_uv[face_vertices]
+            mask_normals = smplpact.texture_map_test_normal(self._uv_inverse.faces, smpl_data.face_normals, np.eye(4, 4, dtype=np.float32))
+            points_3d = smplpact.texture_map_to_3d(uv_data.faces_b, smpl_data.vertices_uv, self._uv_inverse.faces[mask_normals], self._uv_inverse.weights[mask_normals] )
+            color, mask, depth_mask = smplpact.texture_map_project(self._proj_image, None, self._realsense_K.T, np.eye(4, 4, dtype=np.float32), points_3d, self._uv_inverse.pixels[mask_normals], self._uv_inverse.scaled_width, self._uv_inverse.scaled_height, self._uv_inverse.width, self._uv_inverse.height, True)
+            self._texture_array[mask != 0, 0:3] = color[mask != 0, :]
             
-            #print(self._uv_weights.shape)
-            #print(uv_vertices.shape)
-            #points_3d = np.tensordot(self._uv_weights, uv_vertices, axes=[0,1])
-            points_3d = np.sum(self._uv_weights[...,np.newaxis] * uv_vertices, axis=1)
-            #print(self.)
-            #print(points_3d.shape)
+            
 
-            uv_src, z = smplpact.geometry_project(self._realsense_K.T, np.eye(4, 4, dtype=np.float32), points_3d)
-            uv_src = np.rint(uv_src).astype(np.int32)
-            #print(uv_src)
-            mask_src = smplpact.texture_test_inside(self._proj_image, uv_src[:, 0], uv_src[:, 1])
-            #print(np.sum(mask_src))
-            uv_dst = self._uv_box[mask_src, :]
-            uv_src = uv_src[mask_src, :]
-            color = np.zeros((self._uv_h_s, self._uv_w_s, 3), dtype=np.uint8)
-            color[uv_dst[:, 1], uv_dst[:, 0], :] = self._proj_image[uv_src[:, 1], uv_src[:, 0], 0:3]
-            color = cv2.resize(color, (self._texture_array.shape[1], self._texture_array.shape[0]), interpolation=cv2.INTER_LINEAR)
-            self._texture_array[:, :, 0:3] = color
+            
 
             
             self._proj_depth = color#self._texture_array
             
 
-            '''
-            mesh = smplpact.composite_target(0, smpl_data.vertices_uv, uv_data.uvx_b, uv_data.faces_b, smpl_data.face_normals, None)
-            color_pj = smplpact.paint_projection_raw(mesh, None, self._realsense_K.T, np.eye(4, 4, dtype=np.float32), self._texture_array, self._proj_image, scale=1/8)
-            self._texture_array[:, :, 0:3] = color_pj
-            self._proj_depth = self._texture_array
-            '''
-
-            '''
-            items = [smplpact.composite_target(0, smpl_data.vertices_uv, uv_data.uvx_b, uv_data.faces_b, None, [])]
-            proj_pose = np.eye(4, 4, dtype=np.float32)
-            depth, uv2uv, idmap = smplpact.paint_projection(items, self._realsense_K.T, proj_pose.T, self._proj_image, 0.8)
-            #depth, uv2uv, idmap = smplpact.paint_projection_2(items, self._proj_K.T, proj_pose.T, self._proj_image, 0.0)
-            depth = np.nan_to_num(depth, posinf=0, neginf=0)
-            depth = depth / np.max(depth)
-
-            ##self._texture_array = np.zeros((512, 512, 4),dtype=np.uint8)
-            for v in range(0, depth.shape[0]):
-                for u in range(0, depth.shape[1]):
-                    if (depth[v,u] > 0):
-                        y = uv2uv[v, u, 1]
-                        x = uv2uv[v, u, 0]
-                        self._texture_array[y, x, 0:3] = self._proj_image[v, u, :]
-            
-            self._proj_set = True
-            self._proj_depth = depth
-            '''
             
 
         # Add SMPL mesh to the main scene

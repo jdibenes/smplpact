@@ -25,7 +25,7 @@ from PIL import Image, ImageFont, ImageDraw
 # File
 #------------------------------------------------------------------------------
 
-def scan_path(base_path, files_sort=False, files_key=None, files_reverse=False, folders_sort=False, folders_key=None, folders_reverse=False):
+def path_scan(base_path, files_sort=False, files_key=None, files_reverse=False, folders_sort=False, folders_key=None, folders_reverse=False):
     items = os.listdir(base_path)
     paths = [os.path.join(base_path, item) for item in items]
     files = [path for path in paths if (os.path.isfile(path))]
@@ -77,6 +77,11 @@ def math_invert_pose(pose):
 
 def math_transform_K(xy1, K, inverse):
     return (xy1 @ K) if (not inverse) else (xy1 @ np.linalg.inv(K))
+
+
+def math_transform_homography(xy, H, inverse):
+    X = H if (not inverse) else np.linalg.inv(H)
+    return (xy @ X[0:2, :]) + X[2:, :]
 
 
 def math_homogeneous_component(array):
@@ -159,8 +164,18 @@ def geometry_distance_point_segment(line_start, line_end, point):
     return math_norm(xz)
 
 
-def geometry_project(K, pose, points):
-    return math_to_inhomogeneous(math_transform_K(math_transform_points(points, pose, False), K, False))
+def geometry_K(xy1, K, inverse):
+    return math_to_inhomogeneous(math_transform_K(xy1, K, inverse))
+
+
+def geometry_project(K, pose, points, true_depth):
+    pc = math_transform_points(points, pose, False)
+    uv, pz = geometry_K(pc, K, False)
+    return (uv, pz, math_vector_norm(pc)[..., np.newaxis] if (true_depth) else None) # tuple return
+
+
+def geometry_homography(xy, H, inverse):
+    return math_to_inhomogeneous(math_transform_homography(xy, H, inverse))
 
 
 #------------------------------------------------------------------------------
@@ -274,8 +289,8 @@ def texture_uvx_invert(uvx, image_shape, axis):
 
 
 # TODO: ignores last row and column to simplify bilinear interpolation
-def texture_test_inside(texture, x, y):
-    return (x >= 0) & (y >= 0) & (x < (texture.shape[1] - 1)) & (y < (texture.shape[0] - 1))
+def texture_test_inside(texture_shape, x, y):
+    return (x >= 0) & (y >= 0) & (x < (texture_shape[1] - 1)) & (y < (texture_shape[0] - 1))
 
 
 def texture_read(texture, x, y):
@@ -341,6 +356,78 @@ def texture_rotate_times_90(color, code):
 
 def texture_rgb_to_bgr(color):
     return cv2.cvtColor(color, cv2.COLOR_RGB2BGR)
+
+
+class mesh_uv_inverse:
+    def __init__(self, pixels, faces, weights, width, height, scaled_width, scaled_height, scale, tolerance):
+        self.pixels = pixels
+        self.faces = faces
+        self.weights = weights
+        self.width = width
+        self.height = height
+        self.scaled_width = scaled_width
+        self.scaled_height = scaled_height
+        self.scale = scale
+        self.tolerance = tolerance
+
+
+def texture_map_invert(texture_shape, mesh_faces, mesh_uvx, scale=1.0, tolerance=0):
+    h, w = texture_shape[0:2]
+    s_h = math.ceil(h * scale)
+    s_w = math.ceil(w * scale)
+    if ((s_h <= 0) or (s_w <= 0)):
+        return None
+    
+    uv_dst = np.mgrid[0:s_w, 0:s_h].T
+    uv_faces = np.full((s_h, s_w), -1, dtype=np.int32)
+    uv_weights = np.zeros((s_h, s_w, 3), dtype=np.float32)
+
+    for face_index in range(0, mesh_faces.shape[0]):
+        ok, uv, weights = texture_simplex(mesh_uvx[mesh_faces[face_index], :] * scale, tolerance)
+        if (ok):
+            uv_faces[uv[:, 1], uv[:, 0]] = face_index
+            uv_weights[uv[:, 1], uv[:, 0], :] = weights
+
+    mask = uv_faces >= 0
+    if (not np.any(mask)):
+        return None
+
+    uv_dst = uv_dst[mask]
+    uv_faces = uv_faces[mask]
+    uv_weights = uv_weights[mask]
+
+    return mesh_uv_inverse(uv_dst, uv_faces, uv_weights, w, h, s_w, s_h, scale, tolerance)
+
+
+def texture_map_test_normal(inverse_faces, face_normals, pose, threshold=0):
+    return math_transform_bearings(face_normals[inverse_faces, :], pose, False)[:, 2] <= threshold
+
+
+def texture_map_to_3d(mesh_faces, mesh_vertices, inverse_faces, inverse_weights):
+    return np.sum(inverse_weights[..., np.newaxis] * mesh_vertices[mesh_faces[inverse_faces]], axis=1)
+
+
+# TODO: depth test
+def texture_map_project(image, H, K, pose, inverse_3d, inverse_pixels, scaled_width, scaled_height, width, height, true_depth):
+    uv_src, pz, tz = geometry_project(K, pose, inverse_3d, true_depth)
+    if (H is not None):
+        uv_src, _ = geometry_homography(uv_src, H, False)
+    uv_src = np.rint(uv_src).astype(np.int32)
+    mask_src = texture_test_inside(image.shape, uv_src[:, 0], uv_src[:, 1]) & (pz[:, 0] > 0)
+    uv_dst = inverse_pixels[mask_src, :]
+    uv_src = uv_src[mask_src, :]
+    z = pz[mask_src, 0] if (not true_depth) else tz[mask_src, 0]
+    color = np.zeros((scaled_height, scaled_width, 3), dtype=np.uint8)
+    valid = np.zeros((scaled_height, scaled_width), dtype=np.uint8)
+    #depth = np.full((scaled_height, scaled_width), np.inf, dtype=np.float32)
+    color[uv_dst[:, 1], uv_dst[:, 0], :] = image[uv_src[:, 1], uv_src[:, 0], 0:3]
+    valid[uv_dst[:, 1], uv_dst[:, 0]] = 1
+    #depth[uv_dst[:, 1], uv_dst[:, 0]] = z
+    if ((scaled_height != height) or (scaled_width != width)):
+        color = cv2.resize(color, (height, width), interpolation=cv2.INTER_NEAREST)
+        valid = cv2.resize(valid, (height, width), interpolation=cv2.INTER_NEAREST)
+        #depth = cv2.resize(depth, (height, width), interpolation=cv2.INTER_NEAREST)
+    return (color, valid, None) # tuple return
 
 
 #------------------------------------------------------------------------------
@@ -780,7 +867,7 @@ class paint_decal_solid:
 
     def _blit(self, mesh_vertices, face_normal, origin, indices_vertices, indices_uvx, pixels_dst, weights_src, level):
         pixels_src = texture_uvx_invert(weights_src @ self._image_uvx[indices_uvx, 0:2], self._image_buffer.shape, 1)
-        mask = texture_test_inside(self._image_buffer, pixels_src[:, 0], pixels_src[:, 1])
+        mask = texture_test_inside(self._image_buffer.shape, pixels_src[:, 0], pixels_src[:, 1])
         pixels_painted = np.count_nonzero(mask)
         dst = pixels_dst[mask, :]
         src = pixels_src[mask, :]
@@ -2357,7 +2444,6 @@ class renderer_smpl_filter:
         return self._mesh
 
 
-# TODO: multiple meshes
 class renderer_smpl_control:
     def __init__(self, uv_descriptor, model_path, num_betas, device):
         self._device = torch.device(device)
@@ -2490,9 +2576,12 @@ class renderer:
         self._scene_control = renderer_scene_control(settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp)
 
     def smpl_load_model(self, filename_uv, texture_shape, model_path, num_betas, device):
-        uv_descriptor = texture_load_uv(filename_uv, texture_shape)
-        self._mesh_control = renderer_mesh_control(uv_descriptor)
-        self._smpl_control = renderer_smpl_control(uv_descriptor, model_path, num_betas, device)
+        self._smpl_uv_descriptor = texture_load_uv(filename_uv, texture_shape)
+        self._mesh_control = renderer_mesh_control(self._smpl_uv_descriptor)
+        self._smpl_control = renderer_smpl_control(self._smpl_uv_descriptor, model_path, num_betas, device)
+
+    def smpl_get_uv(self) -> mesh_uv_descriptor:
+        return self._smpl_uv_descriptor
 
     def smpl_filter_exists(self, id='patient') -> bool:
         return self._smpl_control.filter_exists(id)
@@ -2841,74 +2930,6 @@ class fps_counter:
         return fps
 
 
-
-
-
-class mesh_neighborhood_operation_uvmap:
-    def __init__(self, mesh_vertices, mesh_faces, mesh_uvx, target, tolerance=0):
-        self._mesh_vertices = mesh_vertices
-        self._mesh_faces = mesh_faces
-        self._mesh_uvx = mesh_uvx
-        self._target = target
-        self._tolerance = tolerance
-
-    def paint(self, face_index, level):
-        vertex_indices = self._mesh_faces[face_index]
-        self._simplex_3d = self._mesh_vertices[vertex_indices, :]
-        self._level = level
-        self._result = (mesh_neighborhood_processor_command.IGNORE, None)
-        texture_processor(self._mesh_uvx[vertex_indices, :], self._paint_uv, self._tolerance)
-        return self._result
-    
-    def _paint_uv(self, pixels, weights):
-        points = weights @ self._simplex_3d
-        self._result = self._target(pixels, points, self._level)
-
-
-class paint_uvmap_projection:
-    def __init__(self, K, pose, id, depth, uv2uv, idmap):
-        self._K = K
-        self._pose = pose
-        self._id = id
-        self._depth = depth
-        self._uv2uv = uv2uv
-        self._idmap = idmap
-        self._w = depth.shape[1]
-        self._h = depth.shape[0]
-
-    def paint(self, uv_dst, points_dst, level):
-        #print('///paint')
-        #print(uv_dst.dtype)
-        #print(points_dst.shape)
-        #print(level)
-
-        command = mesh_neighborhood_processor_command.IGNORE
-        uv_src, z = geometry_project(self._K, self._pose, points_dst)
-
-        #print(uv_src.shape)
-        #print(z.shape)
-
-        z = z[:, 0]
-        uv_src = np.rint(uv_src).astype(np.int32)
-        mask = texture_test_inside(self._depth, uv_src[:, 0], uv_src[:, 1])
-        if (not np.any(mask)):
-            return (command, np.empty((0,2),dtype=np.float64))
-        uv_src = uv_src[mask, :]
-        uv_dst = uv_dst[mask, :]
-        z = z[mask]
-        mask = (z > 0) & (z < self._depth[uv_src[:, 1], uv_src[:, 0]])
-        if (not np.any(mask)):
-            return (command, np.empty((0,2),dtype=np.float64))
-        uv_src = uv_src[mask, :]
-        uv_dst = uv_dst[mask, :]
-        z = z[mask]
-        self._depth[uv_src[:, 1], uv_src[:, 0]] = z
-        self._uv2uv[uv_src[:, 1], uv_src[:, 0], :] = uv_dst
-        self._idmap[uv_src[:, 1], uv_src[:, 0]] = self._id
-        
-        return (command, uv_dst)
-
-
 #------------------------------------------------------------------------------
 # Composite Painting
 #------------------------------------------------------------------------------
@@ -2923,165 +2944,6 @@ class composite_target:
         self.mesh_faces = mesh_faces
         self.mesh_face_normals = mesh_face_normals
         self.render_target = render_target
-
-
-def paint_projection(items, K, pose, image, tolerance=0):
-    h, w = image.shape[0:2]
-    c = len(items)
-
-    depth = np.full((h, w), np.inf, np.float32)
-    uv2uv = np.full((h, w, 2), -1, np.int64)
-    idmap = np.full((h, w), np.int32)
-    
-    for item_id in range(0, c):
-        item = items[item_id]
-        if item.kind == composite_target.KIND_SMPL:
-            uvm = paint_uvmap_projection(K, pose, item_id, depth, uv2uv, idmap)
-            mno = mesh_neighborhood_operation_uvmap(item.mesh_vertices, item.mesh_faces, item.mesh_uvx, uvm.paint, tolerance)
-            for face_index in range(0, item.mesh_faces.shape[0]):
-                mno.paint(face_index, -1)
-
-    return depth, uv2uv, idmap
-
-
-
-
-
-class paint_projective_depth:
-    def __init__(self, K, pose, mesh_vertices, mesh_uvx, mesh_faces, depth, uv2uv, tolerance=0):
-        self._K = K
-        self._pose = pose
-        self._mesh_vertices = mesh_vertices
-        self._mesh_uvx = mesh_uvx
-        self._mesh_faces = mesh_faces
-        self._depth = depth
-        self._uv2uv = uv2uv
-        self._tolerance = tolerance
-
-    def paint(self, face_index, level):
-        vertices = self._mesh_faces[face_index]
-        self._dst_uvx = self._mesh_uvx[vertices, :]
-        simplex_uvx, self._simplex_z = geometry_project(self._K, self._pose, self._mesh_vertices[vertices, :])
-        texture_processor(simplex_uvx, self._paint_uv, self._tolerance)
-        return (mesh_neighborhood_processor_command.IGNORE, None)
-
-    def _paint_uv(self, pixels, weights):
-        mask = texture_test_inside(self._depth, pixels[:, 0], pixels[:, 1])
-        pixels = pixels[mask, :]
-        new_z = (weights[mask, :] @ self._simplex_z)[:, 0]
-        mask = (new_z < self._depth[pixels[:, 1], pixels[:, 0]])
-        self._depth[pixels[mask, 1], pixels[mask, 0]] = new_z[mask]
-
-
-
-
-
-
-
-
-
-
-
-def paint_projection_2(items, K, pose, image, tolerance=0):
-    h, w = image.shape[0:2]
-    c = len(items)
-
-    depth = np.full((h, w), np.inf, np.float32)
-    uv2uv = np.full((h, w, 2), -1, np.int64)
-    idmap = np.full((h, w), np.int32)
-    
-    for item_id in range(0, c):
-        item = items[item_id]
-        if item.kind == composite_target.KIND_SMPL:
-            ppd = paint_projective_depth(K, pose, item.mesh_vertices, item.mesh_faces, depth, tolerance)
-            for face_index in range(0, item.mesh_faces.shape[0]):
-                ppd.paint(face_index, -1)
-                
-
-    
-           
-
-    return depth, uv2uv, idmap
-
-
-
-
-
-
-
-
-
-
-class mesh_neighborhood_operation_uv2vertex:
-    def __init__(self, mesh_vertices, mesh_faces, mesh_uvx, scale=1.0, tolerance=0):
-        self._mesh_vertices = mesh_vertices
-        self._mesh_faces = mesh_faces
-        self._mesh_uvx = mesh_uvx
-        self._scale = scale
-        self._tolerance = tolerance
-
-    def paint(self, face_index, level):
-        vertex_indices = self._mesh_faces[face_index]
-        self._simplex_3d = self._mesh_vertices[vertex_indices, :]
-        self._level = level
-        self._result = (mesh_neighborhood_processor_command.IGNORE, None)
-        texture_processor(self._mesh_uvx[vertex_indices, :] * self._scale, self._paint_uv, self._tolerance)
-        return self._result
-    
-    def _paint_uv(self, uv_dst, weights):
-        points_dst = weights @ self._simplex_3d
-        self._result = (mesh_neighborhood_processor_command.IGNORE, (uv_dst, points_dst))
-
-
-def uv2vertex(face_index, mesh_faces, mesh_vertices, mesh_uvx, scale=1.0, tolerance=0):
-    vertex_indices = mesh_faces[face_index]
-    simplex_3d = mesh_vertices[vertex_indices, :]
-    simplex_uvx = mesh_uvx[vertex_indices, :] * scale
-    ok, uv, weights = texture_simplex(simplex_uvx, tolerance)
-    if (not ok):
-        return None
-    vertex = weights @ simplex_3d
-    return (uv, vertex)
-
-
-
-def paint_projection_raw(item, H, K, pose, texture, image, scale=1.0, tolerance=0):   
-    h_t, w_t = texture.shape[0:2]
-    h_t_s = int(h_t * scale)
-    w_t_s = int(w_t * scale)
-    if ((h_t_s <= 0) or (w_t_s <= 0)):
-        return None
-    color = np.zeros((h_t_s, w_t_s, 3), dtype=np.uint8)
-
-    uv_dst = []
-    vertex_dst = []
-    faces_count = 0
-    normals = math_transform_bearings(item.mesh_face_normals, pose, False)
-    for face_index in range(0, item.mesh_faces.shape[0]):
-        if (normals[face_index, 2] >= 0):
-            continue
-        face_uv2vertex = uv2vertex(face_index,item.mesh_faces, item.mesh_vertices, item.mesh_uvx, scale, tolerance)
-        if (face_uv2vertex is not None):
-            face_uv_dst, face_vertex_dst = face_uv2vertex
-            uv_dst.append(face_uv_dst)
-            vertex_dst.append(face_vertex_dst)
-            faces_count += 1
-    if (faces_count <= 0):
-        return cv2.resize(color, (w_t, h_t), interpolation=cv2.INTER_LINEAR)
-    uv_dst = np.vstack(uv_dst)
-    vertex_dst = np.vstack(vertex_dst)
-    uv_src, z = geometry_project(K, pose, vertex_dst)
-    #uv_src, _ = math_to_inhomogeneous(math_to_homogeneous(uv_src) @ H)
-    uv_src = np.rint(uv_src).astype(np.int32)
-    mask_src = texture_test_inside(image, uv_src[:, 0], uv_src[:, 1])
-    uv_dst = uv_dst[mask_src, :]
-    uv_src = uv_src[mask_src, :]
-    color[uv_dst[:, 1], uv_dst[:, 0], :] = image[uv_src[:, 1], uv_src[:, 0], 0:3]
-    if (scale != 1.0):
-        color = cv2.resize(color, (w_t, h_t), interpolation=cv2.INTER_LINEAR)
-    return color
-
-
 
 
 
@@ -3101,25 +2963,12 @@ class paint_uvmap_projection_2:
 
     def paint(self, uv_dst, points_dst, level):
         command = mesh_neighborhood_processor_command.IGNORE
-        uv_src, z = geometry_project(self._K, self._pose, points_dst)
+        uv_src, z, _ = geometry_project(self._K, self._pose, points_dst, False)
         uv_src = np.rint(uv_src).astype(np.int32)
 
-
-
-        mask = texture_test_inside(self._depth, uv_src[:, 0], uv_src[:, 1])
+        mask = texture_test_inside(self._depth.shape, uv_src[:, 0], uv_src[:, 1])
         if (not np.any(mask)):
             return (command, None)
-        
-
-
-
-
-
-
-
-        
-        
-        
         
         uv_src = uv_src[mask, :]
         uv_dst = uv_dst[mask, :]
@@ -3135,80 +2984,5 @@ class paint_uvmap_projection_2:
         self._idmap[uv_src[:, 1], uv_src[:, 0]] = self._id
         
         return (command, uv_dst)
-
-
-
-
-
-# scale ceil
-def uv2face(texture, mesh_faces, mesh_uvx, scale=1.0, tolerance=0):
-    h, w = texture.shape[0:2]
-    h_s = math.ceil(h * scale)
-    w_s = math.ceil(w * scale)
-    if ((h_s <= 0) or (w_s <= 0)):
-        return None
-    box = np.mgrid[0:w_s, 0:h_s].T
-    uv_faces = np.full((h_s, w_s), -1, dtype=np.int32)
-    uv_weights = np.zeros((h_s, w_s, 3), dtype=np.float32)
-    for face_index in range(0, mesh_faces.shape[0]):
-        ok, uv_dst, weights = texture_simplex(mesh_uvx[mesh_faces[face_index], :] * scale, tolerance)
-        if (not ok):
-            continue
-        uv_faces[uv_dst[:, 1], uv_dst[:, 0]] = face_index
-        uv_weights[uv_dst[:, 1], uv_dst[:, 0], :] = weights
-    mask = uv_faces >= 0
-    box = box[mask]
-    uv_faces = uv_faces[mask]
-    uv_weights = uv_weights[mask]
-
-    print(box.shape)
-    print(uv_faces.shape)
-    print(uv_weights.shape)
-
-    print(box)
-    print(uv_faces)
-    print(uv_weights)
-    
-    
-    
-    
-    
-    #print(box.shape)
-    #print(box[5, 7])
-
-    
-
-    
-    return box, uv_faces, uv_weights, w_s, h_s
-
-        
-        
-        
-        
-
-
-
-    
-
-
-
-
-    
-    
-
-    
-
-    
-    
-    return 
-
-
-
-
-
-
-
-
-
 
 
