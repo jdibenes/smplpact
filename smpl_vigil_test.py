@@ -97,7 +97,7 @@ class demo:
         self._cfg_smpl_filter_ef = renderer_create_settings_smpl_filter_exponential_single([0.25, 0.25, 0.25, 0.9])
         self._cfg_smpl_filter_ow = renderer_create_settings_smpl_filter_fixed_joints()
 
-        self._offscreen_renderer = renderer_context(self._cfg_offscreen, self._cfg_scene, self._cfg_camera, self._cfg_camera_transform, self._cfg_lamp, self._cfg_smpl_model, self._cfg_smpl_filter_bb, self._cfg_smpl_filter_ff, self._cfg_smpl_filter_ef, self._cfg_smpl_filter_ow)
+        self._offscreen_renderer = renderer_context(self._cfg_offscreen, self._cfg_scene, self._cfg_camera, self._cfg_camera_transform, self._cfg_lamp, self._cfg_smpl_model, None, self._cfg_smpl_filter_bb, self._cfg_smpl_filter_ff, self._cfg_smpl_filter_ef, None, None, self._cfg_smpl_filter_ow, None)
         #self._offscreen_renderer = renderer_context(cfg_offscreen, cfg_scene, cfg_camera, cfg_camera_transform, cfg_lamp, cfg_smpl_model)
 
         # Create sample text texture
@@ -139,12 +139,16 @@ class demo:
         smpl_mesh_pose = np.eye(4, 4, dtype=np.float32)
 
         if (smpl_pose is not None):
-            smpl_params, smpl_K = self._offscreen_renderer.smpl_unpack(smpl_pose)
-            smpl_ok, smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, smpl_K.T, self._realsense_K.T)
+            #smpl_params, smpl_K = self._offscreen_renderer.smpl_unpack(smpl_pose)
+            #smpl_ok, smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, smpl_K.T, self._realsense_K.T)
+            smpl_meshes = self._offscreen_renderer.smpl_get_meshes(smpl_pose, self._realsense_K.T)
+            smpl_data = smpl_meshes.get('patient', None)
+            smpl_ok = smpl_data is not None
+
 
             if (smpl_ok):
                 self._last_valid_pose = smpl_pose
-                smpl_data = smpl_result.at(0)
+                #smpl_data = smpl_result.at(0)
 
                 # Add SMPL mesh to the main scene
                 smpl_mesh_id = self._offscreen_renderer.mesh_add_smpl('smpl', 'patient', smpl_data, self._texture_array, smpl_mesh_pose)
