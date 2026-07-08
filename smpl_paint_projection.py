@@ -66,11 +66,20 @@ class demo:
         print(f'Using device: {self._device}')
         print(f'SMPL texture shape: {self._texture_array.shape}')
 
-        self._proj_image = cv2.cvtColor(cv2.imread('./data/test_projection.jpg'), cv2.COLOR_BGR2RGB)
+        self._proj_image = cv2.resize(cv2.cvtColor(cv2.imread('./data/test_projection.jpg'), cv2.COLOR_BGR2RGB), (512, 512))
         self._proj_f = smplpact.geometry_fov_to_f(self._camera_fov_vertical / 2.5, self._proj_image.shape[0])
         self._proj_K = np.array([[self._proj_f, 0, self._proj_image.shape[1] /2],[0,self._proj_f,self._proj_image.shape[0]/2],[0,0,1]])
 
         self._proj_set = False
+
+        with self._offscreen_renderer:
+            pass
+
+        uv_data = self._offscreen_renderer._mesh_control._uv_set
+        self._uv_box, self._uv_faces, self._uv_weights, self._uv_w_s, self._uv_h_s = smplpact.uv2face(self._texture_array, uv_data.faces_b, uv_data.uvx_b)
+
+
+
 
         # Run inference and painting
         start = time.perf_counter()
@@ -110,9 +119,54 @@ class demo:
 
 
         if (not self._proj_set):
-            items = [smplpact.composite_target(0, smpl_data.vertices_uv, uv_data.uvx_b, uv_data.faces_b, [])]
-            proj_pose = np.array([[1,0,0,0],[0,1,0,0.5],[0,0,1,0],[0,0,0,1]], dtype=np.float32)
-            depth, uv2uv, idmap = smplpact.paint_projection(items, self._proj_K.T, proj_pose.T, self._proj_image, 0.8)
+            
+            self._proj_set = False
+
+            #vert = smpl_data.vertices_uv[uv_data.faces_b, :]
+            #print('VERT')
+            #print(uv_data.faces_b.shape)
+            #print(smpl_data.vertices_uv.shape)
+            #print(vert.shape)
+            #print("TEST")
+            face_vertices  =uv_data.faces_b[self._uv_faces]
+            #print(face_vertices.shape)
+            uv_vertices = smpl_data.vertices_uv[face_vertices]
+            
+            #print(self._uv_weights.shape)
+            #print(uv_vertices.shape)
+            #points_3d = np.tensordot(self._uv_weights, uv_vertices, axes=[0,1])
+            points_3d = np.sum(self._uv_weights[...,np.newaxis] * uv_vertices, axis=1)
+            #print(self.)
+            #print(points_3d.shape)
+
+            uv_src, z = smplpact.geometry_project(self._realsense_K.T, np.eye(4, 4, dtype=np.float32), points_3d)
+            uv_src = np.rint(uv_src).astype(np.int32)
+            #print(uv_src)
+            mask_src = smplpact.texture_test_inside(self._proj_image, uv_src[:, 0], uv_src[:, 1])
+            #print(np.sum(mask_src))
+            uv_dst = self._uv_box[mask_src, :]
+            uv_src = uv_src[mask_src, :]
+            color = np.zeros((self._uv_h_s, self._uv_w_s, 3), dtype=np.uint8)
+            color[uv_dst[:, 1], uv_dst[:, 0], :] = self._proj_image[uv_src[:, 1], uv_src[:, 0], 0:3]
+            color = cv2.resize(color, (self._texture_array.shape[1], self._texture_array.shape[0]), interpolation=cv2.INTER_LINEAR)
+            self._texture_array[:, :, 0:3] = color
+
+            
+            self._proj_depth = color#self._texture_array
+            
+
+            '''
+            mesh = smplpact.composite_target(0, smpl_data.vertices_uv, uv_data.uvx_b, uv_data.faces_b, smpl_data.face_normals, None)
+            color_pj = smplpact.paint_projection_raw(mesh, None, self._realsense_K.T, np.eye(4, 4, dtype=np.float32), self._texture_array, self._proj_image, scale=1/8)
+            self._texture_array[:, :, 0:3] = color_pj
+            self._proj_depth = self._texture_array
+            '''
+
+            '''
+            items = [smplpact.composite_target(0, smpl_data.vertices_uv, uv_data.uvx_b, uv_data.faces_b, None, [])]
+            proj_pose = np.eye(4, 4, dtype=np.float32)
+            depth, uv2uv, idmap = smplpact.paint_projection(items, self._realsense_K.T, proj_pose.T, self._proj_image, 0.8)
+            #depth, uv2uv, idmap = smplpact.paint_projection_2(items, self._proj_K.T, proj_pose.T, self._proj_image, 0.0)
             depth = np.nan_to_num(depth, posinf=0, neginf=0)
             depth = depth / np.max(depth)
 
@@ -123,9 +177,11 @@ class demo:
                         y = uv2uv[v, u, 1]
                         x = uv2uv[v, u, 0]
                         self._texture_array[y, x, 0:3] = self._proj_image[v, u, :]
-
+            
             self._proj_set = True
             self._proj_depth = depth
+            '''
+            
 
         # Add SMPL mesh to the main scene
         smpl_mesh_id = self._offscreen_renderer.mesh_add_smpl('smpl', 'patient', smpl_data, self._texture_array, smpl_mesh_pose)
