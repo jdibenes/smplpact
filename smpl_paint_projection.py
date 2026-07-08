@@ -116,30 +116,30 @@ class demo:
         #pose = frame.to_pose()
         smpl_mesh_pose = np.eye(4, 4, dtype=np.float32)#smplpact.math_invert_pose(pose)
 
-        uv_data = self._offscreen_renderer._mesh_control._uv_set
+        uv_data = self._offscreen_renderer.smpl_get_uv()#_mesh_control._uv_set
 
 
         if (not self._proj_set):
             
             self._proj_set = False
 
-            mask_normals = smplpact.texture_map_test_normal(self._uv_inverse.faces, smpl_data.face_normals, np.eye(4, 4, dtype=np.float32))
+            proj_base = np.array([[1,0,0,0],[0,-1,0,0],[0,0,-1,0],[0,0,0,1]], dtype=np.float32)
+            proj_pose = np.linalg.inv(self._offscreen_renderer.camera_get_pose()) @ proj_base
+            mask_normals = smplpact.texture_map_test_normal(self._uv_inverse.faces, smpl_data.face_normals, proj_pose)
             points_3d = smplpact.texture_map_to_3d(uv_data.faces_b, smpl_data.vertices_uv, self._uv_inverse.faces[mask_normals], self._uv_inverse.weights[mask_normals] )
-            color, mask, depth_mask = smplpact.texture_map_project(self._proj_image, None, self._realsense_K.T, np.eye(4, 4, dtype=np.float32), points_3d, self._uv_inverse.pixels[mask_normals], self._uv_inverse.scaled_width, self._uv_inverse.scaled_height, self._uv_inverse.width, self._uv_inverse.height, True)
-            self._texture_array[mask != 0, 0:3] = color[mask != 0, :]
+            color, blend_mask = smplpact.texture_map_project_mesh(self._proj_image, None, self._realsense_K.T, proj_pose, points_3d, self._uv_inverse.pixels[mask_normals], self._uv_inverse.scaled_width, self._uv_inverse.scaled_height, self._uv_inverse.width, self._uv_inverse.height, False)
             
             
-
-            
-
-            
-            self._proj_depth = color#self._texture_array
+            #self._texture_array[mask != 0, 0:3] = color[mask != 0, :]
+            self._blend_array = self._texture_array.copy()
+            self._blend_array[blend_mask != 0, 0:3] = color[blend_mask != 0, :]
+            self._proj_depth = color
             
 
             
 
         # Add SMPL mesh to the main scene
-        smpl_mesh_id = self._offscreen_renderer.mesh_add_smpl('smpl', 'patient', smpl_data, self._texture_array, smpl_mesh_pose)
+        smpl_mesh_id = self._offscreen_renderer.mesh_add_smpl('smpl', 'patient', smpl_data, self._blend_array, smpl_mesh_pose)
 
         # Add your paint code here
         # ...

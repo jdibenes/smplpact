@@ -408,7 +408,7 @@ def texture_map_to_3d(mesh_faces, mesh_vertices, inverse_faces, inverse_weights)
 
 
 # TODO: depth test
-def texture_map_project(image, H, K, pose, inverse_3d, inverse_pixels, scaled_width, scaled_height, width, height, true_depth):
+def texture_map_project_mesh(image, H, K, pose, inverse_3d, inverse_pixels, scaled_width, scaled_height, width, height, true_depth):
     uv_src, pz, tz = geometry_project(K, pose, inverse_3d, true_depth)
     if (H is not None):
         uv_src, _ = geometry_homography(uv_src, H, False)
@@ -416,18 +416,28 @@ def texture_map_project(image, H, K, pose, inverse_3d, inverse_pixels, scaled_wi
     mask_src = texture_test_inside(image.shape, uv_src[:, 0], uv_src[:, 1]) & (pz[:, 0] > 0)
     uv_dst = inverse_pixels[mask_src, :]
     uv_src = uv_src[mask_src, :]
-    z = pz[mask_src, 0] if (not true_depth) else tz[mask_src, 0]
+    #z = pz[mask_src, 0] if (not true_depth) else tz[mask_src, 0]
     color = np.zeros((scaled_height, scaled_width, 3), dtype=np.uint8)
     valid = np.zeros((scaled_height, scaled_width), dtype=np.uint8)
-    #depth = np.full((scaled_height, scaled_width), np.inf, dtype=np.float32)
     color[uv_dst[:, 1], uv_dst[:, 0], :] = image[uv_src[:, 1], uv_src[:, 0], 0:3]
     valid[uv_dst[:, 1], uv_dst[:, 0]] = 1
-    #depth[uv_dst[:, 1], uv_dst[:, 0]] = z
     if ((scaled_height != height) or (scaled_width != width)):
         color = cv2.resize(color, (height, width), interpolation=cv2.INTER_NEAREST)
         valid = cv2.resize(valid, (height, width), interpolation=cv2.INTER_NEAREST)
-        #depth = cv2.resize(depth, (height, width), interpolation=cv2.INTER_NEAREST)
-    return (color, valid, None) # tuple return
+    return (color, valid) # tuple return
+
+
+# TODO: depth test
+def texture_map_project_points(image, H, K, pose, inverse_3d, true_depth):
+    uv_src, pz, tz = geometry_project(K, pose, inverse_3d, true_depth)
+    if (H is not None):
+        uv_src, _ = geometry_homography(uv_src, H, False)
+    uv_src = np.rint(uv_src).astype(np.int32)
+    mask_src = texture_test_inside(image.shape, uv_src[:, 0], uv_src[:, 1]) & (pz[:, 0] > 0)
+    uv_src = uv_src[mask_src, :]
+    color = image[uv_src[:, 1], uv_src[:, 0], 0:3]
+    valid = mask_src
+    return (color, valid) # tuple return
 
 
 #------------------------------------------------------------------------------
@@ -2946,10 +2956,6 @@ class composite_target:
         self.render_target = render_target
 
 
-
-
-
-
 # TODO: depth test
 # TODO: chierality test
 class paint_uvmap_projection_2:
@@ -2984,5 +2990,4 @@ class paint_uvmap_projection_2:
         self._idmap[uv_src[:, 1], uv_src[:, 0]] = self._id
         
         return (command, uv_dst)
-
 
