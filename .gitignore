@@ -18,3 +18,4 @@ data/smpl/SMPL_FEMALE.pkl
 data/smpl/SMPL_MALE.pkl
 data/textures/g.png
 /data/calibration_captures
+data/test_projection.jpg
