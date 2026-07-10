@@ -25,7 +25,7 @@ from PIL import Image, ImageFont, ImageDraw
 # File
 #------------------------------------------------------------------------------
 
-def scan_path(base_path, files_sort=False, files_key=None, files_reverse=False, folders_sort=False, folders_key=None, folders_reverse=False):
+def path_scan(base_path, files_sort=False, files_key=None, files_reverse=False, folders_sort=False, folders_key=None, folders_reverse=False):
     items = os.listdir(base_path)
     paths = [os.path.join(base_path, item) for item in items]
     files = [path for path in paths if (os.path.isfile(path))]
@@ -79,6 +79,11 @@ def math_transform_K(xy1, K, inverse):
     return (xy1 @ K) if (not inverse) else (xy1 @ np.linalg.inv(K))
 
 
+def math_transform_homography(xy, H, inverse):
+    X = H if (not inverse) else np.linalg.inv(H)
+    return (xy @ X[0:2, :]) + X[2:, :]
+
+
 def math_homogeneous_component(array):
     return array[..., -1, np.newaxis]
 
@@ -92,7 +97,8 @@ def math_to_homogeneous(array):
 
 
 def math_to_inhomogeneous(array):
-    return math_inhomogeneous_component(array) / math_homogeneous_component(array)
+    h = math_homogeneous_component(array)
+    return (math_inhomogeneous_component(array) / h, h) # tuple return
 
 
 #------------------------------------------------------------------------------
@@ -158,6 +164,20 @@ def geometry_distance_point_segment(line_start, line_end, point):
     return math_norm(xz)
 
 
+def geometry_K(xy1, K, inverse):
+    return math_to_inhomogeneous(math_transform_K(xy1, K, inverse))
+
+
+def geometry_project(K, pose, points, true_depth):
+    pc = math_transform_points(points, pose, False)
+    uv, pz = geometry_K(pc, K, False)
+    return (uv, pz, math_vector_norm(pc)[..., np.newaxis] if (true_depth) else None) # tuple return
+
+
+def geometry_homography(xy, H, inverse):
+    return math_to_inhomogeneous(math_transform_homography(xy, H, inverse))
+
+
 #------------------------------------------------------------------------------
 # Texture Processing
 #------------------------------------------------------------------------------
@@ -185,7 +205,7 @@ class mesh_uv_descriptor:
 def texture_load_image(filename_image, load_alpha=True, alpha=255):
     rgb = cv2.imread(filename_image, cv2.IMREAD_COLOR_RGB)
     raw = cv2.imread(filename_image, cv2.IMREAD_UNCHANGED)
-    a = raw[:, :, 3] if ((load_alpha) and (raw.shape[2] == 4)) else (np.ones((rgb.shape[0], rgb.shape[1], 1), rgb.dtype) * alpha)
+    a = raw[:, :, 3] if ((load_alpha) and (raw.shape[2] == 4)) else np.full((rgb.shape[0], rgb.shape[1], 1), alpha, rgb.dtype)
     return np.dstack((rgb, a))
 
 
@@ -269,8 +289,8 @@ def texture_uvx_invert(uvx, image_shape, axis):
 
 
 # TODO: ignores last row and column to simplify bilinear interpolation
-def texture_test_inside(texture, x, y):
-    return (x >= 0) & (y >= 0) & (x < (texture.shape[1] - 1)) & (y < (texture.shape[0] - 1))
+def texture_test_inside(texture_shape, x, y):
+    return (x >= 0) & (y >= 0) & (x < (texture_shape[1] - 1)) & (y < (texture_shape[0] - 1))
 
 
 def texture_read(texture, x, y):
@@ -303,7 +323,7 @@ def texture_alpha_remap(alpha, src, dst):
     return alpha
 
 
-def texture_processor(simplex_uvx, callback, tolerance=0):
+def texture_simplex(simplex_uvx, tolerance=0):
     # uvx : [u * (w - 1), (1 - v) * (h - 1)]
     u = simplex_uvx[:, 0]
     v = simplex_uvx[:, 1]
@@ -319,8 +339,15 @@ def texture_processor(simplex_uvx, callback, tolerance=0):
         ab = (box - anchor) @ np.linalg.inv(simplex_uvx[0:2, :] - anchor)
         abc = np.hstack((ab, 1 - ab[:, 0:1] - ab[:, 1:2]))
         mask = np.logical_and.reduce(abc >= -tolerance, axis=1)
-        if (np.any(mask)):
-            callback(box[mask, :], abc[mask, :])
+        return (np.any(mask), box[mask, :], abc[mask, :])
+    
+    return (False, None, None)
+
+
+def texture_processor(simplex_uvx, callback, tolerance=0):
+    ok, pixels, weights = texture_simplex(simplex_uvx, tolerance)
+    if (ok):
+        callback(pixels, weights)
 
 
 def texture_rotate_times_90(color, code):
@@ -329,6 +356,88 @@ def texture_rotate_times_90(color, code):
 
 def texture_rgb_to_bgr(color):
     return cv2.cvtColor(color, cv2.COLOR_RGB2BGR)
+
+
+class mesh_uv_inverse:
+    def __init__(self, pixels, faces, weights, width, height, scaled_width, scaled_height, scale, tolerance):
+        self.pixels = pixels
+        self.faces = faces
+        self.weights = weights
+        self.width = width
+        self.height = height
+        self.scaled_width = scaled_width
+        self.scaled_height = scaled_height
+        self.scale = scale
+        self.tolerance = tolerance
+
+
+def texture_map_invert(texture_shape, mesh_faces, mesh_uvx, scale=1.0, tolerance=0):
+    h, w = texture_shape[0:2]
+    s_h = math.ceil(h * scale)
+    s_w = math.ceil(w * scale)
+    if ((s_h <= 0) or (s_w <= 0)):
+        return None
+    
+    uv_dst = np.mgrid[0:s_w, 0:s_h].T
+    uv_faces = np.full((s_h, s_w), -1, dtype=np.int32)
+    uv_weights = np.zeros((s_h, s_w, 3), dtype=np.float32)
+
+    for face_index in range(0, mesh_faces.shape[0]):
+        ok, uv, weights = texture_simplex(mesh_uvx[mesh_faces[face_index], :] * scale, tolerance)
+        if (ok):
+            uv_faces[uv[:, 1], uv[:, 0]] = face_index
+            uv_weights[uv[:, 1], uv[:, 0], :] = weights
+
+    mask = uv_faces >= 0
+    if (not np.any(mask)):
+        return None
+
+    uv_dst = uv_dst[mask]
+    uv_faces = uv_faces[mask]
+    uv_weights = uv_weights[mask]
+
+    return mesh_uv_inverse(uv_dst, uv_faces, uv_weights, w, h, s_w, s_h, scale, tolerance)
+
+
+def texture_map_test_normal(inverse_faces, face_normals, pose, threshold=0):
+    return math_transform_bearings(face_normals[inverse_faces, :], pose, False)[:, 2] <= threshold
+
+
+def texture_map_to_3d(mesh_faces, mesh_vertices, inverse_faces, inverse_weights):
+    return np.sum(inverse_weights[..., np.newaxis] * mesh_vertices[mesh_faces[inverse_faces]], axis=1)
+
+
+# TODO: depth test
+def texture_map_project_mesh(image, H, K, pose, inverse_3d, inverse_pixels, scaled_width, scaled_height, width, height, true_depth):
+    uv_src, pz, tz = geometry_project(K, pose, inverse_3d, true_depth)
+    if (H is not None):
+        uv_src, _ = geometry_homography(uv_src, H, False)
+    uv_src = np.rint(uv_src).astype(np.int32)
+    mask_src = texture_test_inside(image.shape, uv_src[:, 0], uv_src[:, 1]) & (pz[:, 0] > 0)
+    uv_dst = inverse_pixels[mask_src, :]
+    uv_src = uv_src[mask_src, :]
+    #z = pz[mask_src, 0] if (not true_depth) else tz[mask_src, 0]
+    color = np.zeros((scaled_height, scaled_width, 3), dtype=np.uint8)
+    valid = np.zeros((scaled_height, scaled_width), dtype=np.uint8)
+    color[uv_dst[:, 1], uv_dst[:, 0], :] = image[uv_src[:, 1], uv_src[:, 0], 0:3]
+    valid[uv_dst[:, 1], uv_dst[:, 0]] = 1
+    if ((scaled_height != height) or (scaled_width != width)):
+        color = cv2.resize(color, (height, width), interpolation=cv2.INTER_NEAREST)
+        valid = cv2.resize(valid, (height, width), interpolation=cv2.INTER_NEAREST)
+    return (color, valid) # tuple return
+
+
+# TODO: depth test
+def texture_map_project_points(image, H, K, pose, inverse_3d, true_depth):
+    uv_src, pz, tz = geometry_project(K, pose, inverse_3d, true_depth)
+    if (H is not None):
+        uv_src, _ = geometry_homography(uv_src, H, False)
+    uv_src = np.rint(uv_src).astype(np.int32)
+    mask_src = texture_test_inside(image.shape, uv_src[:, 0], uv_src[:, 1]) & (pz[:, 0] > 0)
+    uv_src = uv_src[mask_src, :]
+    color = image[uv_src[:, 1], uv_src[:, 0], 0:3]
+    valid = mask_src
+    return (color, valid) # tuple return
 
 
 #------------------------------------------------------------------------------
@@ -768,7 +877,7 @@ class paint_decal_solid:
 
     def _blit(self, mesh_vertices, face_normal, origin, indices_vertices, indices_uvx, pixels_dst, weights_src, level):
         pixels_src = texture_uvx_invert(weights_src @ self._image_uvx[indices_uvx, 0:2], self._image_buffer.shape, 1)
-        mask = texture_test_inside(self._image_buffer, pixels_src[:, 0], pixels_src[:, 1])
+        mask = texture_test_inside(self._image_buffer.shape, pixels_src[:, 0], pixels_src[:, 1])
         pixels_painted = np.count_nonzero(mask)
         dst = pixels_dst[mask, :]
         src = pixels_src[mask, :]
@@ -1096,7 +1205,7 @@ def smpl_camera_align_It(K_smpl, K_dst, points_world):
     n = points_world.shape[0]
     K = K_smpl @ np.linalg.inv(K_dst)
     b = points_world @ (K - np.eye(3, dtype=points_world.dtype))
-    a = (points_world / points_world[:, 2:3]) @ K
+    a = math_transform_K(points_world / points_world[:, 2:3], K, False)
     f = np.ones((n, 1), dtype=points_world.dtype)
     z = np.zeros((n, 1), dtype=points_world.dtype)
     e = np.vstack((np.hstack((f, z, -a[:, 0:1])), np.hstack((z, f, -a[:, 1:2]))))
@@ -2345,7 +2454,6 @@ class renderer_smpl_filter:
         return self._mesh
 
 
-# TODO: multiple meshes
 class renderer_smpl_control:
     def __init__(self, uv_descriptor, model_path, num_betas, device):
         self._device = torch.device(device)
@@ -2478,9 +2586,12 @@ class renderer:
         self._scene_control = renderer_scene_control(settings_offscreen, settings_scene, settings_camera, settings_camera_transform, settings_lamp)
 
     def smpl_load_model(self, filename_uv, texture_shape, model_path, num_betas, device):
-        uv_descriptor = texture_load_uv(filename_uv, texture_shape)
-        self._mesh_control = renderer_mesh_control(uv_descriptor)
-        self._smpl_control = renderer_smpl_control(uv_descriptor, model_path, num_betas, device)
+        self._smpl_uv_descriptor = texture_load_uv(filename_uv, texture_shape)
+        self._mesh_control = renderer_mesh_control(self._smpl_uv_descriptor)
+        self._smpl_control = renderer_smpl_control(self._smpl_uv_descriptor, model_path, num_betas, device)
+
+    def smpl_get_uv(self) -> mesh_uv_descriptor:
+        return self._smpl_uv_descriptor
 
     def smpl_filter_exists(self, id='patient') -> bool:
         return self._smpl_control.filter_exists(id)

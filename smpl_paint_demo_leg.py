@@ -99,14 +99,14 @@ class demo:
 
     def _paint(self):
         # SMPL params to mesh
-        smpl_params, smpl_K = self._offscreen_renderer.smpl_unpack(self._pose_message)
-        smpl_ok, smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, smpl_K.T, self._realsense_K)
-        smpl_data = smpl_result.at(0)
+        #smpl_params, smpl_K = self._offscreen_renderer.smpl_unpack(self._pose_message)
+        #smpl_ok, smpl_result = self._offscreen_renderer.smpl_get_mesh(smpl_params, smpl_K.T, self._realsense_K)
+        smpl_data = self._offscreen_renderer.smpl_get_meshes(self._pose_message, self._realsense_K.T)['patient'] #smpl_result.at(0)
         
         # Compute pose to set mesh upright
         # Poses convert from object to world
         smpl_mesh = smplpact.mesh_create(smpl_data.vertices, smpl_data.faces)
-        smpl_mesh_pose = smplpact.math_invert_pose(smplpact.smpl_mesh_chart_openpose(smpl_mesh, smpl_data.joints).create_frame('body_center').to_pose()).T
+        smpl_mesh_pose = smplpact.math_invert_pose(smplpact.smpl_mesh_chart_openpose(smpl_mesh, smpl_data.joints).create_frame('body_center').to_pose())
 
         # Add SMPL mesh to the main scene
         smpl_mesh_id = self._offscreen_renderer.mesh_add_smpl('smpl', 'patient', smpl_data, self._texture_array, smpl_mesh_pose)
@@ -158,17 +158,17 @@ class demo:
         if (key == 70 or key == 102): #f
             self._offscreen_renderer.camera_adjust_parameters(distance=self._camera_distance_increment, relative=True)
         if (key == 78 or key == 110): #n
-            self._offscreen_renderer.camera_move_center([-self._camera_distance_increment, 0, 0], plane=self._camera_use_plane)
+            self._offscreen_renderer.camera_move_center(-self._camera_distance_increment, 0, 0, plane=self._camera_use_plane)
         if (key == 77 or key == 109): #m
-            self._offscreen_renderer.camera_move_center([self._camera_distance_increment, 0, 0], plane=self._camera_use_plane)
+            self._offscreen_renderer.camera_move_center(self._camera_distance_increment, 0, 0, plane=self._camera_use_plane)
         if (key == 85 or key == 117): #u
-            self._offscreen_renderer.camera_move_center([0, self._camera_distance_increment, 0], plane=self._camera_use_plane)
+            self._offscreen_renderer.camera_move_center(0, self._camera_distance_increment, 0, plane=self._camera_use_plane)
         if (key == 74 or key == 106): #j
-            self._offscreen_renderer.camera_move_center([0, -self._camera_distance_increment, 0], plane=self._camera_use_plane)
+            self._offscreen_renderer.camera_move_center(0, -self._camera_distance_increment, 0, plane=self._camera_use_plane)
         if (key == 73 or key == 105): #i
-            self._offscreen_renderer.camera_move_center([0, 0, -self._camera_distance_increment], plane=self._camera_use_plane)
+            self._offscreen_renderer.camera_move_center(0, 0, -self._camera_distance_increment, plane=self._camera_use_plane)
         if (key == 75 or key == 107): #k
-            self._offscreen_renderer.camera_move_center([0, 0, self._camera_distance_increment], plane=self._camera_use_plane)
+            self._offscreen_renderer.camera_move_center(0, 0, self._camera_distance_increment, plane=self._camera_use_plane)
 
         if (key == 27): # esc
             return False
