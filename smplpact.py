@@ -45,7 +45,6 @@ def math_norm(a):
     return np.linalg.norm(a)
 
 
-# TODO: handle m == 0
 def math_normalize(a):
     m = math_norm(a)
     return (a / m, m) # tuple return
@@ -76,7 +75,8 @@ def math_invert_pose(pose):
 
 
 def math_transform_K(xy1, K, inverse):
-    return (xy1 @ K) if (not inverse) else (xy1 @ np.linalg.inv(K))
+    X = K if (not inverse) else np.linalg.inv(K)
+    return xy1 @ X
 
 
 def math_transform_homography(xy, H, inverse):
@@ -113,7 +113,6 @@ def geometry_world_to_local(pose):
     return math_invert_pose(pose)
 
 
-# TODO: handle error for singular matrix
 def geometry_solve_basis(vas, vbs, vad, vbd):
     return np.linalg.inv(np.vstack((vas, vbs, np.cross(vas, vbs)))) @ np.vstack((vad, vbd, np.cross(vad, vbd)))
 
@@ -205,7 +204,7 @@ class mesh_uv_descriptor:
 def texture_load_image(filename_image, load_alpha=True, alpha=255):
     rgb = cv2.imread(filename_image, cv2.IMREAD_COLOR_RGB)
     raw = cv2.imread(filename_image, cv2.IMREAD_UNCHANGED)
-    a = raw[:, :, 3] if ((load_alpha) and (raw.shape[2] == 4)) else np.full((rgb.shape[0], rgb.shape[1], 1), alpha, rgb.dtype)
+    a = raw[:, :, 3] if ((load_alpha) and (raw.shape[2] == 4)) else np.full((rgb.shape[0], rgb.shape[1], 1), alpha, dtype=rgb.dtype)
     return np.dstack((rgb, a))
 
 
@@ -222,7 +221,7 @@ def texture_load_uv(filename_uv, texture_shape):
     uv_b = obj_mesh_b['geometry'][filename_uv]['visual'].uv
     uvx_a = texture_uv_to_uvx(uv_a, texture_shape)
     uvx_b = texture_uv_to_uvx(uv_b, texture_shape)
-    uv_transform = np.zeros(vertices_b.shape[0], np.int64)
+    uv_transform = np.zeros(vertices_b.shape[0], dtype=np.int64)
     for face_index in range(0, faces_b.shape[0]):
         for vertex_index in range(0, 3):
             uv_transform[faces_b[face_index, vertex_index]] = faces_a[face_index, vertex_index]
@@ -245,8 +244,8 @@ def texture_load_font(font_name, font_size):
 
 def texture_stack(textures, fill_color, spacing, vertical):
     axis_a, axis_b = (0, 1) if (vertical) else (1, 0)
-    pad = np.zeros((len(textures), 4), np.int32)
-    d = np.array([texture.shape[axis_b] for texture in textures], np.int32)
+    pad = np.zeros((len(textures), 4), dtype=np.int32)
+    d = np.array([texture.shape[axis_b] for texture in textures], dtype=np.int32)
     fill_d = np.max(d) - d
     pad[0:, 2 * axis_b + 0] = fill_d // 2
     pad[0:, 2 * axis_b + 1] = fill_d - pad[:, 2 * axis_b + 0]
@@ -817,15 +816,15 @@ class paint_decal_solid:
         return False
 
     def _bootstrap(self, mesh_vertices, face_normal, origin, indices_vertices, indices_uvx, pixels_dst, weights_src, level):
-        self._align_axis = np.array([[0, 1, 0]], face_normal.dtype)
-        self._uvx_normal = np.array([[0, 0, 1]], face_normal.dtype)
+        self._align_axis = np.array([[0, 1, 0]], dtype=face_normal.dtype)
+        self._uvx_normal = np.array([[0, 0, 1]], dtype=face_normal.dtype)
 
         self._image_uvx = np.ones_like(mesh_vertices)
 
         vps = origin
         vxs = mesh_vertices[indices_vertices, :]
 
-        vpd = np.array([[self._image_buffer.shape[1] // 2, self._image_buffer.shape[0] // 2, 0]], mesh_vertices.dtype)
+        vpd = np.array([[self._image_buffer.shape[1] // 2, self._image_buffer.shape[0] // 2, 0]], dtype=mesh_vertices.dtype)
 
         align_outward = geometry_solve_basis(self._align_prior, face_normal, self._align_axis * self._scale, self._uvx_normal)
         align_simplex = cv2.Rodrigues(self._uvx_normal * -self._angle)[0]
@@ -1161,7 +1160,7 @@ class mesh_chart_frame:
         return mesh_chart_local(yaw, pitch, offset, nx, ny, nz, xz, nxz)
 
     def to_pose(self):
-        pose = np.eye(4, dtype=self.center.dtype)
+        pose = np.eye(4, 4, dtype=self.center.dtype)
         pose[0:1, :3] = self.left
         pose[1:2, :3] = self.up
         pose[2:3, :3] = self.front
@@ -1204,14 +1203,14 @@ class mesh_chart:
 def smpl_camera_align_It(K_smpl, K_dst, points_world):
     n = points_world.shape[0]
     K = K_smpl @ np.linalg.inv(K_dst)
-    b = points_world @ (K - np.eye(3, dtype=points_world.dtype))
+    b = points_world @ (K - np.eye(3, 3, dtype=points_world.dtype))
     a = math_transform_K(points_world / points_world[:, 2:3], K, False)
     f = np.ones((n, 1), dtype=points_world.dtype)
     z = np.zeros((n, 1), dtype=points_world.dtype)
     e = np.vstack((np.hstack((f, z, -a[:, 0:1])), np.hstack((z, f, -a[:, 1:2]))))
     s = np.vstack((b[:, 0:1], b[:, 1:2]))
     t, res, rank, sv = np.linalg.lstsq(e, s)
-    return (np.eye(3, dtype=points_world.dtype), t.T) # tuple return
+    return (np.eye(3, 3, dtype=points_world.dtype), t.T) # tuple return
 
 
 def smpl_camera_align_Rt(K_smpl, K_dst, points_world):
@@ -1227,7 +1226,7 @@ def smpl_camera_align_dz(K_smpl, K_dst, points_world):
 
 
 def smpl_camera_align_I0(K_smpl, K_dst, points_world):
-    return (np.eye(3, dtype=points_world.dtype), np.zeros((1, 3), dtype=points_world.dtype)) # tuple return
+    return (np.eye(3, 3, dtype=points_world.dtype), np.zeros((1, 3), dtype=points_world.dtype)) # tuple return
 
 
 class smpl_joints:
@@ -1613,9 +1612,9 @@ class camera_transform:
         self._max_pitch = max_pitch
         self._znear = znear
         self._zfar = zfar
-        self._tz = np.eye(4, dtype=center.dtype)
-        self._tc = np.eye(4, dtype=center.dtype)
-        self._global_pose = np.eye(4, dtype=center.dtype)
+        self._tz = np.eye(4, 4, dtype=center.dtype)
+        self._tc = np.eye(4, 4, dtype=center.dtype)
+        self._global_pose = np.eye(4, 4, dtype=center.dtype)
         self._global_x = self._global_pose[0, :3]
         self._global_y = self._global_pose[1, :3]
         self._global_z = self._global_pose[2, :3]
@@ -1867,8 +1866,8 @@ class renderer_scene_control:
         self._node_camera = self._scene.add(self._camera, 'internal@main@camera', self._camera_pose.T)
         self._node_light = self._scene.add(self._light, 'internal@main@lamp', self._camera_pose.T)
 
-        self._kf = np.array([[self._camera.fx, self._camera.fy]], self._camera_pose.dtype)
-        self._kc = np.array([[self._camera.cx, self._camera.cy]], self._camera_pose.dtype)
+        self._kf = np.array([[self._camera.fx, self._camera.fy]], dtype=self._camera_pose.dtype)
+        self._kc = np.array([[self._camera.cx, self._camera.cy]], dtype=self._camera_pose.dtype)
 
     def _camera_set_pose(self, camera_pose):
         self._camera_pose = camera_pose
