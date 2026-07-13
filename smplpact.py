@@ -879,9 +879,9 @@ class paint_decal_solid:
         mask = texture_test_inside(self._image_buffer.shape, pixels_src[:, 0], pixels_src[:, 1])
         pixels_painted = np.count_nonzero(mask)
         dst = pixels_dst[mask, :]
-        src = pixels_src[mask, :]
+        src = np.rint(pixels_src[mask, :]).astype(dst.dtype)
         if (pixels_painted > 0):
-            self._render_buffer[dst[:, 1], dst[:, 0], :] = texture_read(self._image_buffer, src[:, 0], src[:, 1])
+            self._render_buffer[dst[:, 1], dst[:, 0], :] = self._image_buffer[src[:, 1], src[:, 0]]
         cc = pixels_painted > int(self._fill_test * pixels_dst.shape[0])
         command = mesh_neighborhood_processor_command.EXPAND if (cc) else mesh_neighborhood_processor_command.IGNORE
         return (command, dst, src) # tuple return
@@ -1554,7 +1554,7 @@ class smpl_model:
     def __init__(self, uv_descriptor, model_path, num_betas, device):
         self._smpl_model = smplx.SMPLLayer(model_path=model_path, num_betas=num_betas).to(device)
         self._smpl_to_open_pose = torch.tensor(smpl_model.SMPL_TO_OPENPOSE, dtype=torch.long, device=device)
-        self._smpl_faces = torch.tensor(self._smpl_model.faces.reshape((-1,)).astype(np.int32), dtype=torch.long, device=device)
+        self._smpl_faces = torch.tensor(self._smpl_model.faces.reshape((-1,)).astype(np.int64), dtype=torch.long, device=device)
         self._smpl_uv_transform = torch.tensor(uv_descriptor.uv_transform, dtype=torch.long, device=device)
         self._smpl_vertex_faces = torch.tensor(uv_descriptor.vertex_faces_pad_a.reshape((-1,)), dtype=torch.long, device=device)
         self._smpl_vertex_faces_width = uv_descriptor.vertex_faces_pad_a.shape[1]
